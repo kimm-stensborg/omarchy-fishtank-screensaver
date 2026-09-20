@@ -1,0 +1,1676 @@
+#!/usr/bin/env python3
+"""An 8-bit fish tank for the terminal.
+
+Renders a pixel aquarium using half-block characters, so every terminal cell
+holds two square pixels. Meant to run fullscreen as an Omarchy screensaver,
+but it is happy standalone too -- press any key (or Ctrl-C) to leave.
+"""
+
+import argparse
+import json
+import math
+import os
+import random
+import select
+import shutil
+import signal
+import subprocess
+import sys
+import termios
+import time
+import tty
+
+# ---------------------------------------------------------------- palette ---
+
+WATER_TOP = (34, 108, 156)
+WATER_BOTTOM = (3, 12, 38)
+SURFACE = (140, 214, 236)
+RAY = (170, 226, 255)
+
+SAND = (206, 176, 112)
+SAND_LIGHT = (232, 206, 150)
+SAND_DARK = (156, 126, 74)
+ROCK = (92, 96, 112)
+ROCK_DARK = (58, 62, 78)
+
+WEED = ((30, 140, 82), (22, 108, 64), (46, 170, 104))
+GLASS = (118, 176, 196)
+
+INK = (14, 10, 24)
+WHITE = (244, 248, 252)
+
+# Fish species: body, belly, accent (fins/tail), pattern, eye ring.
+SPECIES = [
+    # name,        body,             belly,            accent,           pattern
+    ("clownfish",  (238, 126, 34),   (250, 178, 96),   (250, 240, 236),  "bands"),
+    ("tang",       (36, 96, 210),    (76, 140, 236),   (248, 206, 60),   "plain"),
+    ("guppy",      (222, 92, 138),   (250, 158, 190),  (154, 226, 240),  "spots"),
+    ("neon",       (46, 196, 212),   (140, 240, 246),  (238, 76, 92),    "stripe"),
+    ("goldfish",   (240, 158, 40),   (252, 206, 120),  (248, 226, 150),  "plain"),
+    ("angel",      (232, 224, 96),   (248, 244, 190),  (255, 248, 210),  "bands"),
+    ("betta",      (152, 74, 214),   (198, 130, 244),  (236, 84, 176),   "plain"),
+    ("cardinal",   (214, 48, 62),    (244, 118, 118),  (250, 186, 160),  "stripe"),
+]
+
+
+def clamp(v, lo, hi):
+    return lo if v < lo else hi if v > hi else v
+
+
+def mix(a, b, t):
+    t = clamp(t, 0.0, 1.0)
+    return (
+        int(a[0] + (b[0] - a[0]) * t),
+        int(a[1] + (b[1] - a[1]) * t),
+        int(a[2] + (b[2] - a[2]) * t),
+    )
+
+
+def shade(c, f):
+    return (clamp(int(c[0] * f), 0, 255),
+            clamp(int(c[1] * f), 0, 255),
+            clamp(int(c[2] * f), 0, 255))
+
+
+def pack(c):
+    return (c[0] << 16) | (c[1] << 8) | c[2]
+
+
+# ----------------------------------------------------------------- sprites ---
+
+class Sprite:
+    """A little bag of (x, y, packed-colour) pixels."""
+
+    __slots__ = ("w", "h", "pixels")
+
+    def __init__(self, w, h, pixels):
+        self.w = w
+        self.h = h
+        self.pixels = pixels
+
+    @classmethod
+    def from_art(cls, rows, palette):
+        pixels = []
+        for y, row in enumerate(rows):
+            for x, ch in enumerate(row):
+                if ch == "." or ch == " ":
+                    continue
+                pixels.append((x, y, pack(palette[ch])))
+        return cls(max(len(r) for r in rows), len(rows), pixels)
+
+    def mirrored(self):
+        w = self.w
+        return Sprite(w, self.h, [(w - 1 - x, y, c) for x, y, c in self.pixels])
+
+    def scaled(self, s):
+        if s == 1:
+            return self
+        pixels = []
+        for x, y, c in self.pixels:
+            for dy in range(s):
+                for dx in range(s):
+                    pixels.append((x * s + dx, y * s + dy, c))
+        return Sprite(self.w * s, self.h * s, pixels)
+
+    def tinted(self, target, t):
+        if t <= 0.0:
+            return self
+        pixels = []
+        for x, y, c in self.pixels:
+            col = ((c >> 16) & 255, (c >> 8) & 255, c & 255)
+            pixels.append((x, y, pack(mix(col, target, t))))
+        return Sprite(self.w, self.h, pixels)
+
+
+def fish_art(w, h, species, flap):
+    """Generate one frame of a fish, facing right, as rows of palette keys.
+
+    Tail fan first, then a teardrop body painted over its root so the two
+    never separate, then fins, pattern, face and finally a dark outline --
+    the order an 8-bit sprite would be drawn in by hand. `flap` (-1, 0, 1)
+    swings the tail tip for the swim cycle.
+    """
+    name, body, belly, accent, pattern = species
+    bx = max(2, int(round(w * 0.26)))     # tail occupies x < bx
+    cy = (h - 1) / 2.0
+    b = (h - 1) / 2.0 - 0.1               # body half-height
+    span = float(max(1, w - 1 - bx))
+
+    grid = [["." for _ in range(w)] for _ in range(h)]
+
+    def body_half(x):
+        """Half-height of the body at column x: thin at the tail joint,
+        widest just past the middle, rounded off at the snout."""
+        t = clamp((x - bx) / span, 0.0, 1.0)
+        rise = min(1.0, 1.8 * t ** 0.6)
+        snout = 1.0 - 0.72 * max(0.0, (t - 0.52) / 0.48) ** 1.7
+        return b * rise * snout
+
+    def fill(x, centre, half, key, over=None):
+        if half < 0.0:
+            return
+        for y in range(int(round(centre - half)), int(round(centre + half)) + 1):
+            if 0 <= y < h and (over is None or grid[y][x] in over):
+                grid[y][x] = key
+
+    # Tail: a fan, forked at the tip, swinging with the flap.
+    tip = cy + flap * (b * 0.5)
+    for x in range(0, bx + 1):
+        t = 1.0 - (x / float(bx))          # 0 at the body joint, 1 at the tip
+        spread = max(0.6, b * (0.22 + 0.78 * t ** 0.75))
+        centre = cy + (tip - cy) * t
+        lo = int(round(centre - spread))
+        hi = int(round(centre + spread))
+        notch = spread * 0.5 if t > 0.75 else 0.0
+        for y in range(lo, hi + 1):
+            if 0 <= y < h and abs(y - centre) >= notch - 0.4:
+                grid[y][x] = "A"
+
+    # Body, painted over the root of the tail.
+    for x in range(bx, w):
+        fill(x, cy, body_half(x), "B")
+
+    # Dorsal fin on top, pelvic fin below.
+    for x in range(bx + 1, w - 2):
+        t = (x - bx) / span
+        if 0.12 < t < 0.62:
+            rise = 1 + (1 if h >= 11 and 0.25 < t < 0.5 else 0)
+            top = int(round(cy - body_half(x)))
+            for d in range(1, rise + 1):
+                if 0 <= top - d < h and grid[top - d][x] == ".":
+                    grid[top - d][x] = "A"
+        if 0.20 < t < 0.45 and h >= 9:
+            bottom = int(round(cy + body_half(x)))
+            if 0 <= bottom + 1 < h and grid[bottom + 1][x] == ".":
+                grid[bottom + 1][x] = "A"
+
+    # Pectoral fin: a short nub on the flank behind the gills.
+    fx = bx + int(span * 0.58)
+    fy = int(round(cy + body_half(fx) * 0.62))
+    for dx in range(max(2, w // 7)):
+        if 0 <= fx + dx < w and 0 <= fy < h and grid[fy][fx + dx] == "B":
+            grid[fy][fx + dx] = "A"
+
+    # Belly: lighten the lowest body pixel in each column.
+    for x in range(bx, w):
+        col = [y for y in range(h) if grid[y][x] == "B"]
+        if len(col) > 2:
+            grid[col[-1]][x] = "L"
+
+    # Pattern
+    if pattern == "bands":
+        band = max(2, w // 6)
+        for x in range(bx + 1, w - 2):
+            if ((x - bx) // band) % 2 == 0:
+                for y in range(h):
+                    if grid[y][x] in "BL":
+                        grid[y][x] = "D"
+    elif pattern == "stripe":
+        for y in (int(round(cy)), int(round(cy)) - 1):
+            for x in range(bx, w - 1):
+                if 0 <= y < h and grid[y][x] in "BL":
+                    grid[y][x] = "D"
+    elif pattern == "spots":
+        rnd = random.Random(sum(body) * 31 + w)
+        for _ in range(max(3, w // 3)):
+            sx = rnd.randrange(bx + 1, w - 1)
+            sy = rnd.randrange(0, h)
+            if grid[sy][sx] == "B":
+                grid[sy][sx] = "D"
+
+    # Gill line, one darker column behind the head.
+    gx = bx + int(round(span * 0.74))
+    for y in range(h):
+        if grid[y][gx] in "BLD":
+            grid[y][gx] = "O"
+
+    # Eye: an ink block with a white highlight, the classic 8-bit look.
+    ex = bx + int(round(span * 0.84))
+    ey = int(round(cy - body_half(ex) * 0.42))
+    eye = 2 if h >= 9 else 1
+    for dy in range(eye):
+        for dx in range(eye):
+            x, y = ex + dx, ey + dy
+            if 0 <= x < w and 0 <= y < h and grid[y][x] in "BLD":
+                grid[y][x] = "K"
+    if 0 <= ex < w and 0 <= ey < h and grid[ey][ex] == "K":
+        grid[ey][ex] = "W"
+
+    # Mouth at the snout.
+    mx = w - 1
+    my = int(round(cy + body_half(mx) * 0.55))
+    if 0 <= my < h and grid[my][mx] in "BLD":
+        grid[my][mx] = "O"
+
+    # Outline: pad by a pixel, then darken every empty pixel touching the fish.
+    pw, ph = w + 2, h + 2
+    padded = [["." for _ in range(pw)] for _ in range(ph)]
+    for y in range(h):
+        for x in range(w):
+            padded[y + 1][x + 1] = grid[y][x]
+    grid = [row[:] for row in padded]
+    for y in range(ph):
+        for x in range(pw):
+            if padded[y][x] != ".":
+                continue
+            for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                ny, nx = y + dy, x + dx
+                if 0 <= ny < ph and 0 <= nx < pw and padded[ny][nx] != ".":
+                    grid[y][x] = "E"
+                    break
+
+    outline = mix(shade(body, 0.30), INK, 0.45)
+    palette = {
+        "B": body,
+        "A": mix(accent, WHITE, 0.10),
+        "L": belly,
+        "D": shade(body, 0.52),
+        "O": mix(outline, body, 0.45),
+        "E": outline,
+        "W": WHITE,
+        "K": INK,
+    }
+    return ["".join(row) for row in grid], palette
+
+
+def build_fish_frames(w, h, species):
+    frames = []
+    for flap in (-1, 0, 1, 0):
+        rows, palette = fish_art(w, h, species, flap)
+        frames.append(Sprite.from_art(rows, palette))
+    return frames
+
+
+PUFFER_ART = [
+    "....kkkkkk....",
+    "..kkppppppkk..",
+    ".kppppppppppk.",
+    "kpppspppspppkk",
+    "kppppppppppWKk",
+    "kppspppspppppk",
+    ".kppppppppppk.",
+    "..kkppppppkk..",
+    "....kkkkkk....",
+]
+PUFFER_PALETTE = {}
+
+JELLY_ART = [
+    "..jjjjjj..",
+    ".jjJJJJjj.",
+    "jjJJJJJJjj",
+    "jjJJJJJJjj",
+    ".jjjjjjjj.",
+    "..j.jj.j..",
+    ".t..tt..t.",
+    "..t.tt.t..",
+    ".t...t..t.",
+]
+JELLY_PALETTE = {}
+
+CRAB_ART = [
+    "c.........c",
+    ".c.ccccc.c.",
+    "cccWcccWccc",
+    ".ccccccccc.",
+    "c.c.c.c.c.c",
+]
+CRAB_ART_B = [
+    ".c.......c.",
+    "c..ccccc..c",
+    "cccWcccWccc",
+    ".ccccccccc.",
+    ".c.c.c.c.c.",
+]
+CRAB_PALETTE = {}
+
+CASTLE_ART = [
+    "s.s.s...s.s.s...s.s.s",
+    "sssss...sssss...sssss",
+    "sssss...sdsds...sssss",
+    "sssss...sssss...sssss",
+    "sssss.s.sssss.s.sssss",
+    "sssssssssssssssssssss",
+    "sdsssssssssssssssssds",
+    "sdsssssssdddsssssssds",
+    "ssssssssdddddssssssss",
+    "ssssssssdddddssssssss",
+    "sssssssddddddsssssssd",
+    "sdssssssssssssssssssd",
+    "sssssssssssssssssssss",
+    "sssssssssssssssssssss",
+]
+CASTLE_PALETTE = {}
+
+CHEST_ART = [
+    "..wwwwwwww..",
+    ".wggggggggw.",
+    "wggwwwwwwggw",
+    "wwwwwwwwwwww",
+    "wggggKKgggggw",
+    "wggggKKggggw",
+    "wwwwwwwwwwww",
+]
+CHEST_PALETTE = {}
+
+
+def build_sprite_palettes(puffer=(236, 196, 92), jelly=(186, 126, 236),
+                          crab=(218, 74, 52), chest=(128, 78, 40),
+                          gold=(236, 198, 86)):
+    """(Re)build the hand-drawn sprites' palettes from the current scene
+    colours. Called once at import, and again whenever a theme is applied."""
+    PUFFER_PALETTE.clear()
+    PUFFER_PALETTE.update({"p": puffer, "s": shade(puffer, 0.70),
+                           "k": shade(puffer, 0.84), "W": WHITE, "K": INK})
+    JELLY_PALETTE.clear()
+    JELLY_PALETTE.update({"j": jelly, "J": mix(jelly, WHITE, 0.45),
+                          "t": mix(jelly, WHITE, 0.20)})
+    CRAB_PALETTE.clear()
+    CRAB_PALETTE.update({"c": crab, "W": WHITE})
+    CASTLE_PALETTE.clear()
+    CASTLE_PALETTE.update({"s": SAND, "d": SAND_DARK})
+    CHEST_PALETTE.clear()
+    CHEST_PALETTE.update({"w": chest, "g": mix(chest, SAND, 0.30), "K": gold})
+
+
+# -------------------------------------------------------------------- logo ---
+
+OMARCHY_PATH = os.environ.get("OMARCHY_PATH", "/usr/share/omarchy")
+LOGO_WORDMARK = os.path.join(OMARCHY_PATH, "logo.txt")
+LOGO_MARK = os.path.join(OMARCHY_PATH, "icon.txt")
+LOGO_BRANDING = os.path.expanduser("~/.config/omarchy/branding/screensaver.txt")
+
+# Density ramp for logos written in plain ASCII art rather than block glyphs.
+DENSITY = " .'`^\",:;Il!i><~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$"
+
+
+def logo_mask(path):
+    """Read text art into (width, height, [(x, y, alpha)]).
+
+    Half-block art (the shape `omarchy branding` produces) maps straight onto
+    our pixel grid: one character cell is two stacked pixels. Anything else is
+    treated as density art, where the heavier the glyph the more opaque.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            lines = fh.read().rstrip("\n").split("\n")
+    except OSError:
+        return None
+    lines = [ln.rstrip() for ln in lines]
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    if not lines:
+        return None
+
+    indent = min((len(ln) - len(ln.lstrip()) for ln in lines if ln.strip()), default=0)
+    lines = [ln[indent:] for ln in lines]
+    width = max(len(ln) for ln in lines)
+
+    ramp = len(DENSITY) - 1
+    pixels = []
+    for row, line in enumerate(lines):
+        for col, ch in enumerate(line):
+            if ch == " ":
+                continue
+            if ch == "\u2588":                     # full block
+                halves = ((0, 1.0), (1, 1.0))
+            elif ch == "\u2580":                   # upper half
+                halves = ((0, 1.0),)
+            elif ch == "\u2584":                   # lower half
+                halves = ((1, 1.0),)
+            else:
+                a = (DENSITY.find(ch) / float(ramp)) if ch in DENSITY else 0.8
+                if a < 0.05:
+                    continue
+                halves = ((0, a), (1, a))
+            for half, a in halves:
+                pixels.append((col, row * 2 + half, a))
+    return width, len(lines) * 2, pixels
+
+
+def resize_mask(mask, tw, th):
+    """Nearest-area resize of a mask, quantised back to chunky steps.
+
+    Box-averaging alone gives feathered grey edges, which looks like a JPEG
+    of a logo rather than pixel art, so the result is snapped to three levels.
+    """
+    w, h, pixels = mask
+    if (w, h) == (tw, th):
+        return mask
+    grid = [[0.0] * w for _ in range(h)]
+    for x, y, a in pixels:
+        grid[y][x] = a
+
+    out = []
+    for ty in range(th):
+        y0, y1 = ty * h // th, max(ty * h // th + 1, (ty + 1) * h // th)
+        for tx in range(tw):
+            x0, x1 = tx * w // tw, max(tx * w // tw + 1, (tx + 1) * w // tw)
+            total = 0.0
+            for y in range(y0, y1):
+                row = grid[y]
+                for x in range(x0, x1):
+                    total += row[x]
+            a = total / float((y1 - y0) * (x1 - x0))
+            if a >= 0.5:
+                out.append((tx, ty, 1.0))
+            elif a >= 0.22:
+                out.append((tx, ty, 0.55))
+    return tw, th, out
+
+
+def stack_masks(top, bottom, gap):
+    """Centre one mask above another, the way a logo lockup is set."""
+    tw, th, tp = top
+    bw, bh, bp = bottom
+    width = max(tw, bw)
+    tox = (width - tw) // 2
+    box = (width - bw) // 2
+    pixels = [(x + tox, y, a) for x, y, a in tp]
+    pixels += [(x + box, y + th + gap, a) for x, y, a in bp]
+    return width, th + gap + bh, pixels
+
+
+def omarchy_lockup(max_height=None):
+    """The Omarchy mark sitting above the Omarchy wordmark.
+
+    The mark is built on a 4x4 pixel grid, so it is shrunk by a whole-number
+    factor only -- a fractional one smears those strokes into grey mush.
+    Halving lands it a little above the wordmark's height, which is about
+    where the two are usually locked up.
+    """
+    word = logo_mask(LOGO_WORDMARK)
+    mark = logo_mask(LOGO_MARK)
+    if not word:
+        return mark
+    if not mark:
+        return word
+    mw, mh, _ = mark
+    ww, wh, _ = word
+    gap = max(2, wh // 4)
+    factor = 1
+    if max_height:
+        # Use the mark at full size when the tank is tall enough for it, and
+        # otherwise step down until the lockup fits.
+        while factor < 4 and (mh // factor) + gap + wh > max_height:
+            factor += 1
+    if factor > 1:
+        mark = resize_mask(mark, max(4, mw // factor), max(4, mh // factor))
+    # The mark's strokes end up thinner than the wordmark's, so they need a
+    # little more etch to sit at the same visual weight.
+    mark = (mark[0], mark[1], [(x, y, a * 1.45) for x, y, a in mark[2]])
+    return stack_masks(mark, word, gap)
+
+
+def find_logo(choice, max_height=None):
+    choice = choice or "auto"
+    if choice == "lockup":
+        return omarchy_lockup(max_height)
+    if choice in ("auto", "wordmark"):
+        return logo_mask(LOGO_WORDMARK) or logo_mask(LOGO_BRANDING)
+    if choice == "mark":
+        return logo_mask(LOGO_MARK)
+    return logo_mask(os.path.expanduser(choice))
+
+
+build_sprite_palettes()
+
+# The hand-picked aquarium palette, kept aside so a theme can be undone.
+PALETTE_KEYS = ("WATER_TOP", "WATER_BOTTOM", "SURFACE", "RAY", "SAND",
+                "SAND_LIGHT", "SAND_DARK", "ROCK", "ROCK_DARK", "WEED",
+                "GLASS", "INK", "WHITE", "SPECIES")
+BUILTIN_PALETTE = {key: globals()[key] for key in PALETTE_KEYS}
+
+
+def restore_palette():
+    """Put the built-in aquarium colours back."""
+    globals().update(BUILTIN_PALETTE)
+    build_sprite_palettes()
+
+
+# ------------------------------------------------------------------- theme ---
+
+THEME_STATE = os.path.expanduser("~/.local/state/omarchy/current/theme")
+THEME_DIRS = (
+    os.path.expanduser("~/.config/omarchy/themes"),
+    os.path.join(OMARCHY_PATH, "themes"),
+)
+
+
+def parse_hex(value):
+    v = value.strip().lstrip("#")
+    if len(v) == 3:
+        v = "".join(ch * 2 for ch in v)
+    if len(v) != 6:
+        return None
+    try:
+        return (int(v[0:2], 16), int(v[2:4], 16), int(v[4:6], 16))
+    except ValueError:
+        return None
+
+
+def theme_colors(name=None):
+    """Resolve an Omarchy theme's palette to {key: (r, g, b)} plus "mode".
+
+    Omarchy ships `omarchy-theme-color`, which applies the same alias and
+    fallback cascade every other consumer gets -- so a third-party theme that
+    only defines color0..15 still resolves to semantic names. If it is not on
+    PATH we read colors.toml ourselves and make do with what is in it.
+    """
+    if name:
+        path = None
+        for base in THEME_DIRS:
+            candidate = os.path.join(base, name, "colors.toml")
+            if os.path.exists(candidate):
+                path = candidate
+                break
+        if path is None:
+            return None
+    else:
+        path = os.path.join(THEME_STATE, "colors.toml")
+        if not os.path.exists(path):
+            return None
+
+    out = {}
+    try:
+        done = subprocess.run(["omarchy-theme-color", "--file", path, "--all"],
+                              capture_output=True, text=True, timeout=5)
+        if done.returncode == 0:
+            for line in done.stdout.splitlines():
+                key, _, value = line.partition("\t")
+                rgb = parse_hex(value)
+                if rgb:
+                    out[key] = rgb
+                elif key == "mode":
+                    out["mode"] = value.strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+    if not out:
+        try:
+            with open(path, encoding="utf-8") as fh:
+                for line in fh:
+                    key, sep, value = line.partition("=")
+                    if not sep:
+                        continue
+                    key = key.strip().strip("\"'")
+                    value = value.split("#", 1)[0].strip() if '"' not in value \
+                        else value.split('"')[1]
+                    rgb = parse_hex(value)
+                    if rgb:
+                        out[key] = rgb
+                    elif key == "mode":
+                        out["mode"] = value.strip().strip("\"'")
+        except OSError:
+            return None
+
+    if not out:
+        return None
+
+    if "mode" not in out:
+        bg = out.get("background", out.get("color0", (0, 0, 0)))
+        out["mode"] = "light" if sum(bg) > 382 else "dark"
+    return out
+
+
+def installed_themes():
+    """Every theme with colours, user copies shadowing the stock ones."""
+    found = {}
+    for base in reversed(THEME_DIRS):
+        try:
+            names = os.listdir(base)
+        except OSError:
+            continue
+        for name in names:
+            if os.path.exists(os.path.join(base, name, "colors.toml")):
+                found[name] = True
+    return sorted(found)
+
+
+def current_theme_name():
+    try:
+        with open(os.path.expanduser(
+                "~/.local/state/omarchy/current/theme.name"), encoding="utf-8") as fh:
+            return fh.read().strip() or None
+    except OSError:
+        return None
+
+
+def apply_theme(colors):
+    """Repaint the whole tank from an Omarchy palette.
+
+    The scene keeps its structure -- water darkens with depth, sand is warm,
+    fish are the loud colours -- but every pixel now comes from the theme, so
+    the tank matches whatever the desktop is wearing.
+    """
+    global WATER_TOP, WATER_BOTTOM, SURFACE, RAY
+    global SAND, SAND_LIGHT, SAND_DARK, ROCK, ROCK_DARK
+    global WEED, GLASS, INK, WHITE, SPECIES
+
+    if not colors:
+        return False
+
+    def c(*keys, **kw):
+        for key in keys:
+            if key in colors:
+                return colors[key]
+        return kw.get("default", (128, 128, 128))
+
+    light = colors.get("mode") == "light"
+    bg = c("background", "color0")
+    deep = c("darker_background", "dark_background", default=shade(bg, 0.5))
+    fg = c("bright_foreground", "foreground", "color15")
+    muted = c("muted", "dark_foreground", "color8", default=mix(bg, fg, 0.35))
+
+    # Themes are free to put anything under a colour's name -- matte-black's
+    # "yellow" is red -- so the scene picks by hue instead of by name and
+    # falls back to something neutral when the theme has no such hue at all.
+    HUE_KEYS = ("accent", "red", "orange", "yellow", "green", "cyan", "blue",
+                "magenta", "brown", "bright_red", "bright_yellow",
+                "bright_green", "bright_cyan", "bright_blue",
+                "bright_magenta")
+
+    def pick(score, floor=10):
+        best, best_score = None, floor
+        for key in HUE_KEYS:
+            rgb = colors.get(key)
+            if not rgb:
+                continue
+            value = score(*rgb)
+            if value > best_score:
+                best, best_score = rgb, value
+        return best
+
+    water = pick(lambda r, g, b: b - (r + g) / 2.0)
+    warm = pick(lambda r, g, b: min(r, g) * 1.2 - b)
+    leaf = pick(lambda r, g, b: g - max(r, b))
+
+    # Water: mostly the theme's own background, lifted toward whatever it has
+    # that reads as water. A theme with no cool hue gets an inky tank rather
+    # than a mis-tinted one.
+    if water:
+        WATER_TOP = mix(mix(bg, water, 0.52 if not light else 0.62), fg, 0.08)
+        WATER_BOTTOM = mix(deep, water, 0.14)
+    else:
+        WATER_TOP = mix(bg, fg, 0.22 if not light else 0.12)
+        WATER_BOTTOM = mix(deep, fg, 0.04)
+    SURFACE = mix(water or fg, fg, 0.45)
+    RAY = mix(SURFACE, (255, 255, 255), 0.25)
+
+    sand = warm or mix(muted, fg, 0.35)
+    SAND = mix(sand, fg, 0.18)
+    SAND_LIGHT = mix(sand, (255, 255, 255), 0.35)
+    SAND_DARK = shade(sand, 0.58)
+    ROCK = muted
+    ROCK_DARK = mix(ROCK, deep, 0.5)
+
+    # A theme with no green at all (rose-pine calls a blue "green") gets
+    # plants blended from its sand and water instead of a dead grey.
+    green = leaf or mix(sand, water or fg, 0.55)
+    WEED = (green, shade(green, 0.72), mix(green, fg, 0.30))
+    GLASS = mix(water or fg, (255, 255, 255), 0.3)
+    INK = mix(deep, (0, 0, 0), 0.45)
+    WHITE = fg
+
+    # Fish take the theme's loud colours, brightest first so the tank stays
+    # lively even when the desktop is muted.
+    hues = []
+    for key in ("red", "orange", "magenta", "cyan", "yellow", "blue",
+                "green", "bright_red", "bright_magenta", "bright_blue",
+                "bright_green", "bright_cyan", "bright_yellow", "accent"):
+        rgb = colors.get(key)
+        if rgb and rgb not in hues and rgb != bg:
+            hues.append(rgb)
+    if not hues:
+        return False
+
+    patterns = ("bands", "plain", "stripe", "spots", "plain", "bands")
+    species = []
+    for i, body in enumerate(hues[:10]):
+        fin = hues[(i + 3) % len(hues)]
+        species.append((
+            "theme%d" % i,
+            body,
+            mix(body, fg, 0.45),
+            mix(fin, (255, 255, 255), 0.15),
+            patterns[i % len(patterns)],
+        ))
+    SPECIES = species
+
+    build_sprite_palettes(
+        puffer=warm or hues[0],
+        jelly=pick(lambda r, g, b: min(r, b) - g) or hues[-1],
+        crab=pick(lambda r, g, b: r - max(g, b)) or hues[0],
+        chest=c("brown", default=SAND_DARK),
+        gold=SAND_LIGHT,
+    )
+    return True
+
+
+# ------------------------------------------------------------------ actors ---
+
+class Fish:
+    def __init__(self, tank, species=None, depth=None):
+        self.tank = tank
+        self.species = species or random.choice(SPECIES)
+        self.depth = depth if depth is not None else random.random()
+        scale = 2 if self.depth > 0.80 else 1
+        base_w = random.choice((11, 13, 15)) if scale == 2 else \
+            random.choice((13, 15, 17, 19, 21))
+        base_h = max(5, int(base_w * 0.44) | 1)
+        frames = build_fish_frames(base_w, base_h, self.species)
+        fade = (1.0 - self.depth) * 0.38
+        frames = [f.tinted(WATER_TOP, fade).scaled(scale) for f in frames]
+        self.right = frames
+        self.left = [f.mirrored() for f in frames]
+        self.w = frames[0].w
+        self.h = frames[0].h
+        self.dir = random.choice((-1, 1))
+        self.speed = (3.0 + random.random() * 9.0) * (0.55 + self.depth)
+        self.x = random.uniform(0, max(1, tank.w - self.w))
+        self.y = random.uniform(2, max(3, tank.floor - self.h - 2))
+        self.phase = random.uniform(0, math.tau)
+        self.bob = random.uniform(0.6, 2.4)
+        self.frame_t = random.random()
+        self.frame = 0
+        self.turn_at = time.monotonic() + random.uniform(6, 24)
+        self.bubble_at = time.monotonic() + random.uniform(4, 20)
+        self.drift = random.uniform(-0.25, 0.25)
+        self.reach = random.uniform(24.0, 68.0)
+
+    def hunt(self, dt):
+        """Chase the nearest crumb. Returns True while there is one."""
+        flake = self.tank.nearest_flake(self.x + self.w * 0.5,
+                                        self.y + self.h * 0.5,
+                                        getattr(self, "reach", 45.0))
+        if flake is None:
+            return False
+        mouth_x = self.x + (self.w if self.dir > 0 else 0)
+        mouth_y = self.y + self.h * 0.5
+        dx = flake.x - mouth_x
+        dy = flake.y - mouth_y
+        if abs(dx) < 2.0 and abs(dy) < 2.0:
+            flake.dead = True
+            self.tank.bubbles.append(Bubble(self.tank, mouth_x, mouth_y,
+                                            size=1, depth=self.depth))
+            return True
+        # Turn toward it, then put on a burst of speed.
+        if abs(dx) > self.w * 0.4:
+            self.dir = 1 if dx > 0 else -1
+        rush = self.speed * 1.5 + 4.0
+        self.x += clamp(dx, -1.0, 1.0) * rush * dt
+        self.y += clamp(dy, -1.0, 1.0) * rush * 0.55 * dt
+        self.y = clamp(self.y, 1.0, self.tank.floor - self.h - 1)
+        self.frame_t += dt * 9.0
+        if self.frame_t >= 1.0:
+            self.frame_t -= 1.0
+            self.frame = (self.frame + 1) % 4
+        return True
+
+    def update(self, dt, now):
+        if self.tank.flakes and self.hunt(dt):
+            return
+        self.x += self.dir * self.speed * dt
+        self.phase += dt * (1.4 + self.speed * 0.08)
+        self.y += math.sin(self.phase) * self.bob * dt + self.drift * dt
+        top = 1.0
+        bottom = self.tank.floor - self.h - 1
+        if self.y < top:
+            self.y = top
+            self.drift = abs(self.drift)
+        elif self.y > bottom:
+            self.y = bottom
+            self.drift = -abs(self.drift)
+
+        self.frame_t += dt * (3.0 + self.speed * 0.25)
+        if self.frame_t >= 1.0:
+            self.frame_t -= 1.0
+            self.frame = (self.frame + 1) % 4
+
+        if now > self.turn_at and 0 < self.x < self.tank.w - self.w:
+            self.dir *= -1
+            self.turn_at = now + random.uniform(8, 30)
+
+        if now > self.bubble_at:
+            self.bubble_at = now + random.uniform(6, 26)
+            mx = self.x + (self.w if self.dir > 0 else 0)
+            self.tank.bubbles.append(Bubble(self.tank, mx, self.y + self.h * 0.5,
+                                            size=1, depth=self.depth))
+
+        if self.x < -self.w - 4:
+            self.x = self.tank.w + 2
+        elif self.x > self.tank.w + 4:
+            self.x = -self.w - 2
+
+    def draw(self, buf):
+        sprite = self.right[self.frame] if self.dir > 0 else self.left[self.frame]
+        self.tank.blit(buf, sprite, int(self.x), int(self.y))
+
+
+class Puffer(Fish):
+    """A round little fellow who drifts rather than swims."""
+
+    def __init__(self, tank):
+        self.tank = tank
+        self.depth = random.uniform(0.3, 0.7)
+        base = Sprite.from_art(PUFFER_ART, PUFFER_PALETTE)
+        base = base.tinted(WATER_TOP, (1.0 - self.depth) * 0.3)
+        self.right = [base, base.scaled(1)]
+        self.left = [base.mirrored(), base.mirrored()]
+        self.w, self.h = base.w, base.h
+        self.dir = random.choice((-1, 1))
+        self.speed = 2.0 + random.random() * 2.0
+        self.x = random.uniform(0, max(1, tank.w - self.w))
+        self.y = random.uniform(3, max(4, tank.floor - self.h - 3))
+        self.phase = random.uniform(0, math.tau)
+        self.bob = 2.2
+        self.frame_t = 0.0
+        self.frame = 0
+        self.turn_at = time.monotonic() + random.uniform(10, 25)
+        self.bubble_at = time.monotonic() + random.uniform(5, 15)
+        self.drift = 0.0
+
+    def update(self, dt, now):
+        Fish.update(self, dt, now)
+        self.frame = 0
+
+
+class Jelly:
+    def __init__(self, tank):
+        self.tank = tank
+        base = Sprite.from_art(JELLY_ART, JELLY_PALETTE)
+        self.frames = [base, base.scaled(1)]
+        self.w, self.h = base.w, base.h
+        self.x = random.uniform(0, max(1, tank.w - self.w))
+        self.y = random.uniform(tank.floor * 0.3, tank.floor - self.h - 4)
+        self.phase = random.uniform(0, math.tau)
+        self.vx = random.uniform(-1.4, 1.4)
+
+    def update(self, dt, now):
+        self.phase += dt * 1.1
+        self.y -= (math.sin(self.phase) * 0.5 + 0.5) * 3.2 * dt
+        self.x += self.vx * dt
+        if self.y < 2:
+            self.y = self.tank.floor - self.h - 2
+        if self.x < -self.w:
+            self.x = self.tank.w
+        elif self.x > self.tank.w:
+            self.x = -self.w
+
+    def draw(self, buf):
+        squash = 0 if math.sin(self.phase) > 0 else 1
+        self.tank.blit(buf, self.frames[squash], int(self.x), int(self.y))
+
+
+class Crab:
+    def __init__(self, tank):
+        self.tank = tank
+        self.a = Sprite.from_art(CRAB_ART, CRAB_PALETTE)
+        self.b = Sprite.from_art(CRAB_ART_B, CRAB_PALETTE)
+        self.w, self.h = self.a.w, self.a.h
+        self.x = random.uniform(0, max(1, tank.w - self.w))
+        self.y = tank.floor - self.h + 1
+        self.dir = random.choice((-1, 1))
+        self.step = 0.0
+        self.pause_until = 0.0
+
+    def update(self, dt, now):
+        crumb = self.tank.nearest_flake(self.x + self.w * 0.5, self.y, 60.0,
+                                        settled=True)
+        if crumb is not None:
+            self.pause_until = 0.0
+            dx = crumb.x - (self.x + self.w * 0.5)
+            if abs(dx) < 1.5:
+                crumb.dead = True
+            else:
+                self.dir = 1 if dx > 0 else -1
+                self.x = clamp(self.x + self.dir * 9.0 * dt,
+                               0, self.tank.w - self.w)
+                self.step += dt * 13.0
+            return
+
+        if now < self.pause_until:
+            return
+        self.x += self.dir * 6.0 * dt
+        self.step += dt * 9.0
+        if self.x < 0 or self.x > self.tank.w - self.w:
+            self.dir *= -1
+            self.x = clamp(self.x, 0, self.tank.w - self.w)
+        if random.random() < dt * 0.12:
+            self.pause_until = now + random.uniform(0.6, 2.5)
+        if random.random() < dt * 0.05:
+            self.dir *= -1
+
+    def draw(self, buf):
+        sprite = self.a if int(self.step) % 2 == 0 else self.b
+        self.tank.blit(buf, sprite, int(self.x), int(self.y))
+
+
+class Bubble:
+    def __init__(self, tank, x, y, size=None, depth=0.5):
+        self.tank = tank
+        self.x = x
+        self.y = y
+        self.size = size if size is not None else random.choice((1, 1, 2, 2, 3))
+        self.speed = 7.0 + random.random() * 9.0
+        self.phase = random.uniform(0, math.tau)
+        self.colour = pack(mix(GLASS, WHITE, 0.25 + depth * 0.4))
+        self.dead = False
+
+    def update(self, dt, now):
+        self.y -= self.speed * dt
+        self.phase += dt * 3.4
+        self.x += math.sin(self.phase) * 5.0 * dt
+        if self.y < 1:
+            self.dead = True
+
+    def draw(self, buf):
+        x, y, s = int(self.x), int(self.y), self.size
+        if s == 1:
+            self.tank.px(buf, x, y, self.colour)
+        elif s == 2:
+            for dx, dy in ((0, 0), (1, 0), (0, 1), (1, 1)):
+                self.tank.px(buf, x + dx, y + dy, self.colour)
+        else:
+            for dx, dy in ((1, 0), (2, 0), (0, 1), (3, 1),
+                           (0, 2), (3, 2), (1, 3), (2, 3)):
+                self.tank.px(buf, x + dx, y + dy, self.colour)
+            self.tank.px(buf, x + 1, y + 1, pack(WHITE))
+
+
+class Flake:
+    """A crumb of food, sinking until something eats it."""
+
+    def __init__(self, tank, x, y):
+        self.tank = tank
+        self.x = x
+        self.y = y
+        self.phase = random.uniform(0, math.tau)
+        self.sink = random.uniform(1.6, 3.2)
+        self.colour = pack(mix(SAND_LIGHT, (255, 180, 90), 0.45))
+        self.dead = False
+        self.settled_at = None
+
+    def update(self, dt, now):
+        floor = self.tank.sand_top[int(clamp(self.x, 0, self.tank.w - 1))]
+        if self.y >= floor - 1:
+            # Landed: the crab gets a little while to find it.
+            self.y = floor - 1
+            if self.settled_at is None:
+                self.settled_at = now
+            elif now - self.settled_at > 25:
+                self.dead = True
+            return
+        self.phase += dt * 2.2
+        self.y += self.sink * dt
+        self.x += math.sin(self.phase) * 3.0 * dt
+
+    def draw(self, buf):
+        self.tank.px(buf, int(self.x), int(self.y), self.colour)
+
+
+class Weed:
+    def __init__(self, tank, x):
+        self.tank = tank
+        self.x = x
+        self.height = random.randint(8, max(10, int(tank.floor * 0.45)))
+        self.phase = random.uniform(0, math.tau)
+        self.sway = random.uniform(1.2, 3.0)
+        self.width = random.choice((1, 1, 2))
+        self.colour = pack(random.choice(WEED))
+        self.dark = pack(WEED[1])
+        self.tip = pack(WEED[2])
+
+    def draw(self, buf, t):
+        base_y = self.tank.floor
+        for i in range(self.height):
+            f = i / float(self.height)
+            dx = math.sin(t * 0.9 + self.phase + f * 2.2) * self.sway * f
+            x = int(round(self.x + dx))
+            y = base_y - i
+            colour = self.tip if f > 0.82 else self.colour
+            for w in range(self.width + (1 if f < 0.5 else 0)):
+                self.tank.px(buf, x + w, y, colour)
+            # Leaves alternate sides every few pixels.
+            if i > 2 and i % 3 == 0 and f < 0.92:
+                side = 1 if (i // 3) % 2 == 0 else -1
+                lx = x + (self.width if side > 0 else -1)
+                self.tank.px(buf, lx, y, self.dark)
+                self.tank.px(buf, lx + side, y - 1, colour)
+
+
+# -------------------------------------------------------------------- tank ---
+
+class Tank:
+    def __init__(self, cols, rows, opts):
+        self.cols = cols
+        self.rows = rows
+        self.w = cols
+        self.h = rows * 2
+        self.opts = opts
+        self.t = 0.0
+        self.floor = int(self.h * 0.86)
+
+        self.water = self._water_rows()
+        self.sand = self._sand()
+        self.decor = self._decor()
+
+        self.bubbles = []
+        self.flakes = []
+        self.actors = []
+        count = opts.fish if opts.fish is not None else \
+            clamp(int(self.w * self.h / 900), 5, 18)
+        for _ in range(count):
+            self.actors.append(Fish(self))
+        if count >= 5:
+            self.actors.append(Puffer(self))
+        for _ in range(max(1, count // 6)):
+            self.actors.append(Jelly(self))
+        self.actors.append(Crab(self))
+        self.actors.sort(key=lambda a: getattr(a, "depth", 0.5))
+
+        self.weeds = [Weed(self, x) for x in self._weed_positions()]
+        self.vent_at = 0.0
+        self.logo = self._logo()
+
+    # -- static scenery -----------------------------------------------------
+
+    def _logo(self):
+        """Etch the Omarchy logo onto the back wall of the tank.
+
+        Returns [(buffer index, alpha)] so drawing it is a flat loop. The
+        light comes from above, so the top edge of a stroke catches it and
+        the bottom edge falls into shadow -- the logo reads as carved glass
+        rather than as a sticker.
+        """
+        if getattr(self.opts, "logo", "auto") == "none":
+            return []
+        usable = self.floor - 6
+        mask = find_logo(getattr(self.opts, "logo", "auto"), int(usable * 0.78))
+        if not mask:
+            return []
+        mw, mh, pixels = mask
+        scale = max(1, min(int(self.w * 0.66) // mw, int(usable * 0.52) // mh))
+        ox = (self.w - mw * scale) // 2
+        oy = max(2, (usable - mh * scale) // 2)
+
+        on = set()
+        for x, y, _ in pixels:
+            on.add((x, y))
+
+        # How tall the stroke is at each pixel. Thin strokes get a flat fill;
+        # only a stroke with room to spare gets the carved highlight/shadow,
+        # otherwise the bevel eats the letter and the logo reads as noise.
+        run = {}
+        for x, y in on:
+            if (x, y - 1) in on:
+                continue
+            length = 0
+            while (x, y + length) in on:
+                length += 1
+            for d in range(length):
+                run[(x, y + d)] = length
+
+        baked = []
+        strength = clamp(getattr(self.opts, "logo_opacity", 0.26), 0.0, 1.0)
+        # In a light theme the water is brighter than the etch would be, so
+        # the logo has to be cut into it darker rather than lighter.
+        pale = sum(WATER_TOP) / 3.0 > 140
+        if pale:
+            # Bright water: cut the logo in darker, with the light catching
+            # the lower lip of the groove instead of the upper one.
+            fill_body = fill_top = mix(INK, WATER_BOTTOM, 0.4)
+            fill_bottom = (255, 255, 255)
+            strength *= 1.5    # dark on light needs more to read as etched
+        else:
+            fill_body, fill_top = RAY, SURFACE
+            fill_bottom = WATER_BOTTOM
+        for x, y, a in pixels:
+            thick = run.get((x, y), 1) * scale >= 4
+            lit = thick and (x, y - 1) not in on
+            shadowed = thick and (x, y + 1) not in on
+            for dy in range(scale):
+                edge_top = lit and dy == 0
+                edge_bottom = shadowed and dy == scale - 1
+                for dx in range(scale):
+                    px, py = ox + x * scale + dx, oy + y * scale + dy
+                    if not (0 <= px < self.w and 0 <= py < self.floor - 1):
+                        continue
+                    if edge_top:
+                        colour, alpha = fill_top, a * strength * 1.5
+                    elif edge_bottom:
+                        colour, alpha = fill_bottom, a * strength * 1.2
+                    else:
+                        colour, alpha = fill_body, a * strength
+                    baked.append((py * self.w + px, pack(colour),
+                                  clamp(alpha, 0.0, 0.6)))
+        return baked
+
+    def _water_rows(self):
+        rows = []
+        for y in range(self.h):
+            f = y / float(max(1, self.h - 1))
+            rows.append(mix(WATER_TOP, WATER_BOTTOM, f ** 0.85))
+        return rows
+
+    def _sand(self):
+        """Dithered sea floor, returned as a list of (x, y, colour)."""
+        pixels = []
+        rnd = random.Random(1337)
+        top = [self.floor + int(round(math.sin(x * 0.11) * 1.6 +
+                                      math.sin(x * 0.37) * 0.9))
+               for x in range(self.w)]
+        for x in range(self.w):
+            for y in range(top[x], self.h):
+                r = rnd.random()
+                if y == top[x]:
+                    c = SAND_LIGHT if r < 0.4 else SAND
+                elif r < 0.12:
+                    c = SAND_DARK
+                elif r < 0.24:
+                    c = SAND_LIGHT
+                else:
+                    c = SAND
+                pixels.append((x, y, pack(c)))
+        # pebbles
+        for _ in range(max(4, self.w // 14)):
+            px = rnd.randrange(2, max(3, self.w - 4))
+            py = top[px] + rnd.randrange(0, 3)
+            size = rnd.choice((1, 2, 2, 3))
+            for dy in range(size):
+                for dx in range(size + 1):
+                    c = ROCK if dy == 0 else ROCK_DARK
+                    pixels.append((px + dx, py + dy, pack(c)))
+        self.sand_top = top
+        return pixels
+
+    def _decor(self):
+        items = []
+        castle = Sprite.from_art(CASTLE_ART, CASTLE_PALETTE)
+        cx = int(self.w * random.uniform(0.12, 0.7))
+        cx = clamp(cx, 1, max(1, self.w - castle.w - 1))
+        items.append((castle, cx, self.floor - castle.h + 2))
+        self.castle_rect = (cx, castle.w)
+
+        chest = Sprite.from_art(CHEST_ART, CHEST_PALETTE)
+        for _ in range(12):
+            ox = random.randrange(0, max(1, self.w - chest.w))
+            if abs(ox - cx) > castle.w + 2:
+                items.append((chest, ox, self.floor - chest.h + 2))
+                self.chest_x = ox + chest.w // 2
+                break
+        else:
+            self.chest_x = None
+        return items
+
+    def _weed_positions(self):
+        spots = []
+        x = random.randrange(0, 8)
+        while x < self.w:
+            if not (self.castle_rect[0] - 2 <= x <= self.castle_rect[0] + self.castle_rect[1] + 1):
+                spots.append(x)
+            x += random.randrange(5, 16)
+        return spots
+
+    # -- drawing helpers ----------------------------------------------------
+
+    def px(self, buf, x, y, colour):
+        if 0 <= x < self.w and 0 <= y < self.h:
+            buf[y * self.w + x] = colour
+
+    def blit(self, buf, sprite, ox, oy):
+        w, h = self.w, self.h
+        for x, y, c in sprite.pixels:
+            px = ox + x
+            py = oy + y
+            if 0 <= px < w and 0 <= py < h:
+                buf[py * w + px] = c
+
+    # -- food ---------------------------------------------------------------
+
+    def feed(self, now):
+        """Sprinkle food across the surface."""
+        count = clamp(self.w // 6, 6, 40)
+        for _ in range(count):
+            self.flakes.append(Flake(self, random.uniform(2, self.w - 3),
+                                     random.uniform(0, 4)))
+
+    def nearest_flake(self, x, y, reach, settled=False):
+        best, best_d = None, reach * reach
+        for flake in self.flakes:
+            if flake.dead or (settled and flake.settled_at is None):
+                continue
+            dx = flake.x - x
+            dy = (flake.y - y) * 1.6      # the tank is wider than it is deep
+            d = dx * dx + dy * dy
+            if d < best_d:
+                best, best_d = flake, d
+        return best
+
+    # -- frame --------------------------------------------------------------
+
+    def update(self, dt, now):
+        self.t += dt
+        for actor in self.actors:
+            actor.update(dt, now)
+        for flake in self.flakes:
+            flake.update(dt, now)
+        self.flakes = [f for f in self.flakes if not f.dead]
+        for b in self.bubbles:
+            b.update(dt, now)
+        self.bubbles = [b for b in self.bubbles if not b.dead][-400:]
+
+        # Sand vents and the treasure chest puff bubbles now and then.
+        if now > self.vent_at:
+            self.vent_at = now + random.uniform(0.35, 1.6)
+            if self.chest_x is not None and random.random() < 0.45:
+                x = self.chest_x + random.uniform(-2, 2)
+            else:
+                x = random.uniform(0, self.w)
+            y = self.sand_top[int(clamp(x, 0, self.w - 1))] - 1
+            for _ in range(random.randint(1, 3)):
+                self.bubbles.append(Bubble(self, x + random.uniform(-1, 1), y))
+
+    def draw(self, buf):
+        w, h, t = self.w, self.h, self.t
+
+        # Water gradient with a slow horizontal shimmer.
+        for y in range(h):
+            base = self.water[y]
+            wob = math.sin(t * 0.7 + y * 0.18) * 4
+            row = pack((clamp(int(base[0] + wob), 0, 255),
+                        clamp(int(base[1] + wob), 0, 255),
+                        clamp(int(base[2] + wob * 1.4), 0, 255)))
+            start = y * w
+            for x in range(w):
+                buf[start + x] = row
+
+        # The logo, etched into the back wall behind everything else.
+        for idx, colour, alpha in self.logo:
+            c = buf[idx]
+            buf[idx] = pack(mix(((c >> 16) & 255, (c >> 8) & 255, c & 255),
+                                ((colour >> 16) & 255, (colour >> 8) & 255, colour & 255),
+                                alpha))
+
+        # God rays: soft diagonal bands from the surface.
+        ray_depth = self.floor
+        for i in range(3):
+            phase = t * (6 + i * 2.5) + i * 21.0
+            head = (phase % (w + 60)) - 30
+            width = 5 + i * 3
+            for y in range(ray_depth):
+                f = y / float(ray_depth)
+                x0 = int(head + y * 0.55)
+                strength = (1.0 - f) * 0.30
+                if strength <= 0.01:
+                    continue
+                for dx in range(width):
+                    x = x0 + dx
+                    if 0 <= x < w:
+                        idx = y * w + x
+                        c = buf[idx]
+                        col = ((c >> 16) & 255, (c >> 8) & 255, c & 255)
+                        edge = 1.0 - abs((dx / (width - 1.0)) * 2 - 1)
+                        buf[idx] = pack(mix(col, RAY, strength * edge))
+
+        # Drifting plankton.
+        for i in range(max(8, w // 6)):
+            px = (i * 37 + int(t * (6 + i % 5) * 0.6)) % w
+            py = int((i * 53 + t * (2 + (i % 3))) % max(1, self.floor - 2)) + 1
+            idx = py * w + px
+            c = buf[idx]
+            col = ((c >> 16) & 255, (c >> 8) & 255, c & 255)
+            buf[idx] = pack(mix(col, SURFACE, 0.35))
+
+        # Surface line.
+        for x in range(w):
+            y = int(1 + (math.sin(x * 0.22 + t * 1.6) + 1) * 0.9)
+            self.px(buf, x, y, pack(mix(SURFACE, WATER_TOP, 0.35)))
+            self.px(buf, x, max(0, y - 1), pack(SURFACE))
+
+        # Scenery.
+        for weed in self.weeds:
+            weed.draw(buf, t)
+        for sprite, sx, sy in self.decor:
+            self.blit(buf, sprite, sx, sy)
+        for x, y, c in self.sand:
+            if 0 <= x < w and 0 <= y < h:
+                buf[y * w + x] = c
+
+        for flake in self.flakes:
+            flake.draw(buf)
+        for actor in self.actors:
+            actor.draw(buf)
+        for b in self.bubbles:
+            b.draw(buf)
+
+
+# ------------------------------------------------------------------- state ---
+
+STATE_DIR = os.path.join(
+    os.environ.get("XDG_STATE_HOME", os.path.expanduser("~/.local/state")),
+    "fishtank")
+STATE_FILE = os.path.join(STATE_DIR, "state.json")
+
+
+def load_state():
+    """What was picked last time, so the tank opens the way it was left."""
+    try:
+        with open(STATE_FILE, encoding="utf-8") as fh:
+            saved = json.load(fh)
+        return saved if isinstance(saved, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_state(**values):
+    state = load_state()
+    state.update(values)
+    try:
+        os.makedirs(STATE_DIR, exist_ok=True)
+        temp = STATE_FILE + ".new"
+        with open(temp, "w", encoding="utf-8") as fh:
+            json.dump(state, fh)
+        os.replace(temp, STATE_FILE)
+    except OSError:
+        pass          # a screensaver is not worth failing over
+
+
+# ------------------------------------------------------------------- label ---
+
+# A 3x5 pixel font -- enough for a theme name in the corner, drawn in the
+# tank's own pixels so it belongs to the picture rather than sitting on top.
+GLYPHS = {
+    "A": ("###", "# #", "###", "# #", "# #"),
+    "B": ("## ", "# #", "## ", "# #", "## "),
+    "C": ("###", "#  ", "#  ", "#  ", "###"),
+    "D": ("## ", "# #", "# #", "# #", "## "),
+    "E": ("###", "#  ", "###", "#  ", "###"),
+    "F": ("###", "#  ", "###", "#  ", "#  "),
+    "G": ("###", "#  ", "# #", "# #", "###"),
+    "H": ("# #", "# #", "###", "# #", "# #"),
+    "I": ("###", " # ", " # ", " # ", "###"),
+    "J": ("  #", "  #", "  #", "# #", "###"),
+    "K": ("# #", "# #", "## ", "# #", "# #"),
+    "L": ("#  ", "#  ", "#  ", "#  ", "###"),
+    "M": ("# #", "###", "###", "# #", "# #"),
+    "N": ("# #", "## ", "###", " ##", "# #"),
+    "O": ("###", "# #", "# #", "# #", "###"),
+    "P": ("###", "# #", "###", "#  ", "#  "),
+    "Q": ("###", "# #", "# #", "###", "  #"),
+    "R": ("###", "# #", "###", "## ", "# #"),
+    "S": ("###", "#  ", "###", "  #", "###"),
+    "T": ("###", " # ", " # ", " # ", " # "),
+    "U": ("# #", "# #", "# #", "# #", "###"),
+    "V": ("# #", "# #", "# #", "# #", " # "),
+    "W": ("# #", "# #", "###", "###", "# #"),
+    "X": ("# #", "# #", " # ", "# #", "# #"),
+    "Y": ("# #", "# #", " # ", " # ", " # "),
+    "Z": ("###", "  #", " # ", "#  ", "###"),
+    "0": ("###", "# #", "# #", "# #", "###"),
+    "1": (" # ", "## ", " # ", " # ", "###"),
+    "2": ("###", "  #", "###", "#  ", "###"),
+    "3": ("###", "  #", "###", "  #", "###"),
+    "4": ("# #", "# #", "###", "  #", "  #"),
+    "5": ("###", "#  ", "###", "  #", "###"),
+    "6": ("###", "#  ", "###", "# #", "###"),
+    "7": ("###", "  #", " # ", " # ", " # "),
+    "8": ("###", "# #", "###", "# #", "###"),
+    "9": ("###", "# #", "###", "  #", "###"),
+    "-": ("   ", "   ", "###", "   ", "   "),
+    ".": ("   ", "   ", "   ", "   ", "#  "),
+    ":": ("   ", " # ", "   ", " # ", "   "),
+    " ": ("   ", "   ", "   ", "   ", "   "),
+}
+
+LABEL_SECONDS = 2.0
+
+
+def draw_label(tank, buf, text, fade=1.0):
+    """Stamp text into the top-left corner of the tank."""
+    text = text.upper()
+    # One pixel per pixel: at a screensaver font size that is already a
+    # comfortable read, and it leaves the tank to be the thing you look at.
+    scale = 1
+    step = 4 * scale
+    ox, oy = 2, 3
+    ink = pack(mix(INK, WATER_BOTTOM, 0.25))
+    lit = pack(mix(WHITE, SURFACE, 1.0 - clamp(fade, 0.0, 1.0)))
+    for i, ch in enumerate(text):
+        glyph = GLYPHS.get(ch)
+        if glyph is None:
+            continue
+        for gy, row in enumerate(glyph):
+            for gx, on in enumerate(row):
+                if on != "#":
+                    continue
+                for dy in range(scale):
+                    for dx in range(scale):
+                        px = ox + i * step + gx * scale + dx
+                        py = oy + gy * scale + dy
+                        tank.px(buf, px + scale, py + scale, ink)
+                        tank.px(buf, px, py, lit)
+
+
+# ------------------------------------------------------------------ output ---
+
+TOP_HALF = "\u2580"  # upper half block
+
+
+def render(buf, cols, rows, out):
+    parts = ["\033[H"]
+    prev_fg = prev_bg = -1
+    for r in range(rows):
+        top = r * 2 * cols
+        bot = top + cols
+        parts.append("\033[%d;1H" % (r + 1))
+        for x in range(cols):
+            fg = buf[top + x]
+            bg = buf[bot + x]
+            if fg != prev_fg:
+                parts.append("\033[38;2;%d;%d;%dm" % ((fg >> 16) & 255, (fg >> 8) & 255, fg & 255))
+                prev_fg = fg
+            if bg != prev_bg:
+                parts.append("\033[48;2;%d;%d;%dm" % ((bg >> 16) & 255, (bg >> 8) & 255, bg & 255))
+                prev_bg = bg
+            parts.append(TOP_HALF)
+    out.write("".join(parts))
+    out.flush()
+
+
+# F1..F4, as the terminals around here send them (SS3, CSI, linux console).
+FUNCTION_KEYS = {}
+for _i, _codes in enumerate((
+        (b"\x1bOP", b"\x1b[11~", b"\x1b[[A"),
+        (b"\x1bOQ", b"\x1b[12~", b"\x1b[[B"),
+        (b"\x1bOR", b"\x1b[13~", b"\x1b[[C"),
+        (b"\x1bOS", b"\x1b[14~", b"\x1b[[D"))):
+    for _code in _codes:
+        FUNCTION_KEYS[_code] = _i + 1
+
+
+def function_key(chunk):
+    """Which F-key a keypress is, or None for any other key."""
+    return FUNCTION_KEYS.get(chunk)
+
+
+def pretty_theme(name):
+    return (name or "").replace("-", " ").strip() or "built-in"
+
+
+def focused_class():
+    try:
+        raw = subprocess.run(["hyprctl", "activewindow", "-j"],
+                             capture_output=True, text=True, timeout=1.5)
+        return json.loads(raw.stdout).get("class", "")
+    except Exception:
+        return None
+
+
+def main():
+    ap = argparse.ArgumentParser(description="An 8-bit fish tank for your terminal.")
+    ap.add_argument("--fps", type=float, default=24.0, help="frame rate (default 24)")
+    ap.add_argument("--fish", type=int, default=None, help="how many fish (default: fit the tank)")
+    ap.add_argument("--seed", type=int, default=None, help="reproducible tank layout")
+    ap.add_argument("--theme", nargs="?", const="current", default=None,
+                    metavar="NAME",
+                    help="Omarchy theme to paint the tank from; the one in "
+                         "use by default, or name one to preview it")
+    ap.add_argument("--no-theme", dest="theme", action="store_const",
+                    const="none", help="use the built-in aquarium palette")
+    ap.add_argument("--logo", default=None, metavar="WHAT",
+                    help="text art etched into the back wall: 'wordmark' "
+                         "(the default), 'lockup' for the mark above the "
+                         "wordmark, 'mark', a path to your own art, or 'none'")
+    ap.add_argument("--logo-opacity", type=float, default=0.26,
+                    help="how strongly the logo shows through (default 0.26)")
+    ap.add_argument("--frames", type=int, default=None,
+                    help="render this many frames then quit (for testing)")
+    ap.add_argument("--exit-on-key", action="store_true",
+                    help="quit on any keypress (screensaver mode)")
+    ap.add_argument("--exit-on-unfocus", metavar="CLASS", default=None,
+                    help="quit when this Hyprland window class loses focus")
+    opts = ap.parse_args()
+
+    if opts.seed is not None:
+        random.seed(opts.seed)
+
+    # A flag wins; otherwise the tank opens however it was last left with the
+    # function keys; otherwise it follows the desktop.
+    saved = load_state()
+    asked = opts.theme is not None
+    choice = opts.theme or saved.get("theme") or "current"
+    opts.logo = opts.logo or saved.get("logo") or "wordmark"
+
+    def use_theme(choice):
+        """Apply a palette choice. Returns the name to show, or None."""
+        if choice == "none":
+            restore_palette()
+            return "built-in"
+        name = None if choice == "current" else choice
+        if apply_theme(theme_colors(name)):
+            return pretty_theme(name or current_theme_name() or "current")
+        return None
+
+    if use_theme(choice) is None:
+        if asked and choice not in ("current",):
+            sys.stderr.write("fishtank: could not read theme %s\n" % choice)
+            return 1
+        # A screensaver that refuses to start because a theme went missing is
+        # worse than one in its own colours.
+        if asked:
+            sys.stderr.write("fishtank: no readable Omarchy theme, "
+                             "using the built-in palette\n")
+        restore_palette()
+        choice = "none"
+
+    themes = installed_themes()
+    logos = ("wordmark", "lockup", "mark", "none")
+
+    out = sys.stdout
+    isatty = out.isatty() and sys.stdin.isatty()
+    old_term = None
+    if isatty:
+        # cbreak rather than raw: keys arrive unbuffered, but Ctrl-C still
+        # reaches us as a signal.
+        old_term = termios.tcgetattr(sys.stdin.fileno())
+        tty.setcbreak(sys.stdin.fileno())
+
+    resized = [True]
+    signal.signal(signal.SIGWINCH, lambda *_: resized.__setitem__(0, True))
+
+    out.write("\033[?1049h\033[?25l\033]11;rgb:00/00/00\007")
+    out.flush()
+
+    tank = None
+    buf = None
+    cols = rows = 0
+    label = ""
+    label_until = 0.0
+    layout_seed = random.randrange(1 << 30)
+    try:
+        drawn = 0
+        last = time.monotonic()
+        next_focus_check = last + 1.0
+        frame_budget = 1.0 / max(1.0, opts.fps)
+        while True:
+            now = time.monotonic()
+            if resized[0]:
+                resized[0] = False
+                size = shutil.get_terminal_size((80, 24))
+                cols, rows = max(20, size.columns), max(8, size.lines)
+                # Same layout seed every time, so switching theme repaints the
+                # tank you were already watching instead of building a new one.
+                random.seed(layout_seed)
+                tank = Tank(cols, rows, opts)
+                buf = [0] * (cols * rows * 2)
+                out.write("\033[2J")
+
+            dt = min(0.2, now - last)
+            last = now
+            tank.update(dt, now)
+            tank.draw(buf)
+            if now < label_until:
+                draw_label(tank, buf, label,
+                           clamp((label_until - now) / 0.4, 0.0, 1.0))
+            render(buf, cols, rows, out)
+            drawn += 1
+            if opts.frames is not None and drawn >= opts.frames:
+                break
+
+            if opts.exit_on_unfocus and now >= next_focus_check:
+                next_focus_check = now + 1.0
+                cls = focused_class()
+                if cls is not None and cls != opts.exit_on_unfocus:
+                    break
+
+            sleep = frame_budget - (time.monotonic() - now)
+            if isatty:
+                ready, _, _ = select.select([sys.stdin], [], [], max(0.0, sleep))
+                if not ready:
+                    continue
+                key = function_key(os.read(sys.stdin.fileno(), 64))
+                if key is None:
+                    if opts.exit_on_key:
+                        break
+                    continue
+
+                if key in (1, 2):
+                    if key == 1 and themes:            # F1: next theme
+                        here = themes.index(choice) if choice in themes else -1
+                        choice = themes[(here + 1) % len(themes)]
+                    else:                              # F2: back to the desktop's
+                        choice = "current"
+                    shown = use_theme(choice)
+                    if shown is None:
+                        restore_palette()
+                        choice, shown = "none", "built-in"
+                    save_state(theme=choice)
+                    resized[0] = True                  # rebuild with the new palette
+                    label = shown
+                elif key == 3:                         # F3: cycle the logo
+                    opts.logo = logos[(logos.index(opts.logo) + 1)
+                                      % len(logos)] if opts.logo in logos \
+                        else logos[0]
+                    save_state(logo=opts.logo)
+                    tank.logo = tank._logo()
+                    label = "logo: %s" % opts.logo
+                else:                                  # F4: feed the fish
+                    tank.feed(now)
+                    label = "feeding"
+                label_until = time.monotonic() + LABEL_SECONDS
+            elif sleep > 0:
+                time.sleep(sleep)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if old_term is not None:
+            termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old_term)
+        out.write("\033[0m\033[?25h\033[?1049l")
+        out.flush()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main() or 0)

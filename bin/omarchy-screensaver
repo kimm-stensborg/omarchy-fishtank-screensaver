@@ -1,0 +1,56 @@
+#!/bin/bash
+
+# omarchy:summary=Run the Omarchy screensaver as an 8-bit fish tank.
+#
+# This shadows the stock /usr/share/omarchy/bin/omarchy-screensaver by sitting
+# earlier on PATH (~/.local/bin). omarchy-launch-screensaver still does the
+# work of opening one terminal per monitor with the right font and class.
+
+FISHTANK="${FISHTANK_BIN:-$(dirname "$(readlink -f "$0")")/fishtank}"
+
+exit_screensaver() {
+  hyprctl eval 'hl.config({ cursor = { invisible = false } })' &>/dev/null ||
+    hyprctl keyword cursor:invisible false &>/dev/null || true
+  # Leaving on one monitor leaves on all of them, same as the stock saver.
+  pkill -f '[o]rg.omarchy.screensaver' 2>/dev/null
+  exit 0
+}
+
+trap exit_screensaver SIGINT SIGTERM SIGHUP SIGQUIT
+
+printf '\033]11;rgb:00/00/00\007' # Black background while the tank fills in
+
+hyprctl eval 'hl.config({ cursor = { invisible = true } })' &>/dev/null ||
+  hyprctl keyword cursor:invisible true &>/dev/null
+
+# Terminals allocate the pty at 80x24 and only resize once the compositor has
+# told the window how big it is. Starting before that lands paints a tiny tank
+# into the corner of a fullscreen window.
+wait_for_terminal_resize() {
+  local deadline=$((SECONDS + 2))
+  while ((SECONDS < deadline)) && [[ $(stty size 2>/dev/null) == "24 80" ]]; do
+    sleep 0.02
+  done
+}
+
+wait_for_terminal_resize
+
+# omarchy-launch-screensaver takes no arguments of its own, so anything you
+# want the screensaver to run with goes in this file, one flag per line:
+#
+#   echo --theme > ~/.config/fishtank.conf
+#
+CONFIG="${FISHTANK_CONFIG:-$HOME/.config/fishtank.conf}"
+options=()
+if [[ -r $CONFIG ]]; then
+  while read -r line; do
+    line="${line%%#*}"
+    read -r -a words <<<"$line"
+    options+=("${words[@]}")
+  done <"$CONFIG"
+fi
+
+"$FISHTANK" --exit-on-key --exit-on-unfocus org.omarchy.screensaver \
+  "${options[@]}" "$@"
+
+exit_screensaver
