@@ -14,6 +14,8 @@ fish that leaves one screen arrives on the next. You can feed them.
 
 ![Fish Tank](preview.gif)
 
+<sub>Sixteen seconds of it, in full colour: [fishtank.mp4](https://github.com/kimm-stensborg/omarchy-fishtank-screensaver/releases/download/v1.5.0/fishtank.mp4)</sub>
+
 - **Plugin ID:** `io.github.kimm-stensborg.fishtank`
 - **Kind:** service
 - **License:** MIT
