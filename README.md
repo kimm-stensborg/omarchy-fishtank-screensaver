@@ -128,8 +128,21 @@ assumed, which all four do.
 ## Uninstall
 
 ```bash
-./uninstall.sh
+./uninstall.sh            # back to the stock Omarchy screensaver
+./uninstall.sh --purge    # and delete ~/.config/fishtank.conf too
 ```
+
+It removes the two symlinks and the saved F-key state, then checks what
+`omarchy-launch-screensaver` will find from now on and prints it, exiting
+non-zero if anything is still shadowing the stock binary. Since nothing else
+was ever touched -- no files under `/usr/share/omarchy`, no plugin clone, no
+edited launcher, no Hyprland config -- that is the whole of it: the next idle
+timeout gives you Omarchy's own screensaver back.
+
+It only deletes symlinks that point at a checkout of this project, so a
+`fishtank` or `omarchy-screensaver` of your own in `~/.local/bin` is reported
+and left alone. It is safe to run twice, and it works from any clone -- you do
+not need the one you installed from.
 
 ## Options
 
