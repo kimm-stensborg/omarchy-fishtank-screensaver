@@ -76,6 +76,10 @@ def pack(c):
     return (c[0] << 16) | (c[1] << 8) | c[2]
 
 
+def unpack(v):
+    return ((v >> 16) & 255, (v >> 8) & 255, v & 255)
+
+
 # ----------------------------------------------------------------- sprites ---
 
 class Sprite:
@@ -958,6 +962,36 @@ def make_jelly(w, h):
     return ["".join(row) for row in grid]
 
 
+# ------------------------------------------------------------------- night ---
+
+# A full day in the tank, in seconds: day, dusk, night, dawn.
+NIGHT_PERIOD = 900.0
+NIGHT_MARKS = (0.40, 0.50, 0.90)
+
+
+def night_level(elapsed, period=NIGHT_PERIOD):
+    """How far into the night the tank is, 0 (day) to 1 (dark)."""
+    day_end, dusk_end, night_end = NIGHT_MARKS
+    phase = (elapsed % period) / period
+
+    def ease(t):
+        t = clamp(t, 0.0, 1.0)
+        return t * t * (3 - 2 * t)
+
+    if phase < day_end:
+        return 0.0
+    if phase < dusk_end:
+        return ease((phase - day_end) / (dusk_end - day_end))
+    if phase < night_end:
+        return 1.0
+    return 1.0 - ease((phase - night_end) / (1.0 - night_end))
+
+
+def night_colour():
+    """The colour everything sinks toward after dark."""
+    return mix(WATER_BOTTOM, (2, 5, 18), 0.65)
+
+
 # ------------------------------------------------------------------ actors ---
 
 class Fish:
@@ -1008,6 +1042,8 @@ class Fish:
         self.reach = random.uniform(24.0, 68.0)
         self.school = None
         self.slot = (0.0, 0.0)
+        # Where this one settles once the lights go down.
+        self.rest_y = random.uniform(0.55, 0.92) * (tank.floor - self.h)
 
     def hunt(self, dt):
         """Chase the nearest crumb. Returns True while there is one."""
@@ -1079,7 +1115,12 @@ class Fish:
             return
         self.x += self.dir * self.speed * dt
         self.phase += dt * (1.4 + self.speed * 0.08)
-        self.y += math.sin(self.phase) * self.bob * dt + self.drift * dt
+        night = self.tank.night
+        self.y += math.sin(self.phase) * self.bob * (1.0 - 0.7 * night) * dt \
+            + self.drift * dt
+        if night > 0.35:
+            # Sinking toward a resting spot, the way a tank goes quiet.
+            self.y += (self.rest_y - self.y) * 0.25 * night * dt
         top = 1.0
         bottom = self.tank.floor - self.h - 1
         if self.y < top:
@@ -1358,7 +1399,17 @@ class Jelly:
 
     def draw(self, buf):
         squash = 0 if math.sin(self.phase) > 0 else 1
-        self.tank.blit(buf, self.frames[squash], int(self.x), int(self.y))
+        sprite = self.frames[squash]
+        night = self.tank.night
+        if night > 0.25:
+            # Bioluminescence: a faint halo once the lights go down.
+            glow = pack(mix(night_colour(), JELLY_PALETTE.get("J", (200, 160, 240)),
+                            0.30 * night))
+            ox, oy = int(self.x), int(self.y)
+            for x, y, _ in sprite.pixels:
+                for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                    self.tank.px(buf, ox + x + dx, oy + y + dy, glow)
+        self.tank.blit(buf, sprite, int(self.x), int(self.y))
 
 
 class Crab:
@@ -1588,6 +1639,14 @@ class Tank:
             self.front_weeds.append(Weed(self, int(edge), front=True))
         self.vent_at = 0.0
         self.logo = self._logo()
+        self.night = 0.0
+        self._night_step = 0
+        self._day_sand = None
+        self._day_decor = None
+        self._day_logo = None
+        self.night_mode = getattr(opts, "night", "cycle")
+        if isinstance(self.night_mode, float):
+            self.set_night(self.night_mode)
 
     # -- static scenery -----------------------------------------------------
 
@@ -1759,6 +1818,67 @@ class Tank:
             if 0 <= px < w and 0 <= py < h:
                 buf[py * w + px] = c
 
+    # -- night --------------------------------------------------------------
+
+    def set_night(self, level):
+        """Take the light out of the tank, or put it back.
+
+        Sprites are re-tinted rather than the finished frame being blended,
+        because blending a whole frame every tick costs more than a terminal
+        can afford. The level is quantised, so this runs a few dozen times a
+        night rather than every frame.
+        """
+        self.night = level
+        dark = night_colour()
+
+        def tint_sprite(sprite, amount):
+            return sprite.tinted(dark, amount)
+
+        for actor in list(self.actors) + list(self.backdrop):
+            # Jellyfish are the one thing that keeps its colour after dark.
+            amount = level * (0.12 if isinstance(actor, Jelly) else 0.55)
+            for attr in ("right", "left", "frames", "a", "b"):
+                current = getattr(actor, attr, None)
+                if current is None:
+                    continue
+                stored = "_day_" + attr
+                base = getattr(actor, stored, None)
+                if base is None:
+                    base = current
+                    setattr(actor, stored, base)
+                if isinstance(base, list):
+                    setattr(actor, attr, [tint_sprite(f, amount) for f in base])
+                else:
+                    setattr(actor, attr, tint_sprite(base, amount))
+            if isinstance(actor, Eel):
+                if not hasattr(actor, "_day_colours"):
+                    actor._day_colours = (actor.body, actor.belly)
+                body, belly = actor._day_colours
+                actor.body = pack(mix(unpack(body), dark, level * 0.55))
+                actor.belly = pack(mix(unpack(belly), dark, level * 0.55))
+
+        if self._day_sand is None:
+            self._day_sand = self.sand
+        self.sand = [(x, y, pack(mix(unpack(c), dark, level * 0.62)))
+                     for x, y, c in self._day_sand]
+
+        if self._day_decor is None:
+            self._day_decor = self.decor
+        self.decor = [(tint_sprite(sprite, level * 0.58), x, y)
+                      for sprite, x, y in self._day_decor]
+
+        for weed in self.weeds + self.front_weeds:
+            if not hasattr(weed, "_day_colours"):
+                weed._day_colours = (weed.colour, weed.dark, weed.tip)
+            base = weed._day_colours
+            weed.colour, weed.dark, weed.tip = (
+                pack(mix(unpack(c), dark, level * 0.6)) for c in base)
+
+        if self._day_logo is None:
+            self._day_logo = self.logo
+        self.logo = [(i, pack(mix(unpack(c), dark, level * 0.5)), a)
+                     for i, c, a in self._day_logo]
+
     # -- food ---------------------------------------------------------------
 
     def feed(self, now):
@@ -1784,12 +1904,24 @@ class Tank:
 
     def update(self, dt, now):
         self.t += dt
+
+        if self.night_mode == "cycle":
+            level = night_level(self.t)
+            # Quantised: re-tinting on every frame would cost more than the
+            # rest of the drawing put together.
+            step = int(round(level * 24))
+            if step != self._night_step:
+                self._night_step = step
+                self.set_night(step / 24.0)
+
+        # Everything moves slower after dark.
+        dt_actors = dt * (1.0 - 0.45 * self.night)
         for school in self.schools:
-            school.update(dt, now)
+            school.update(dt_actors, now)
         for actor in self.actors:
-            actor.update(dt, now)
+            actor.update(dt_actors, now)
         for far in self.backdrop:
-            far.update(dt, now)
+            far.update(dt_actors, now)
         for flake in self.flakes:
             flake.update(dt, now)
         self.flakes = [f for f in self.flakes if not f.dead]
@@ -1811,10 +1943,13 @@ class Tank:
     def draw(self, buf):
         w, h, t = self.w, self.h, self.t
 
-        # Water gradient with a slow horizontal shimmer.
+        # Water gradient with a slow horizontal shimmer, sunk toward night.
+        dark = night_colour() if self.night else None
         for y in range(h):
             base = self.water[y]
-            wob = math.sin(t * 0.7 + y * 0.18) * 4
+            if dark:
+                base = mix(base, dark, self.night * 0.78)
+            wob = math.sin(t * 0.7 + y * 0.18) * 4 * (1.0 - 0.7 * self.night)
             row = pack((clamp(int(base[0] + wob), 0, 255),
                         clamp(int(base[1] + wob), 0, 255),
                         clamp(int(base[2] + wob * 1.4), 0, 255)))
@@ -1829,16 +1964,18 @@ class Tank:
                                 ((colour >> 16) & 255, (colour >> 8) & 255, colour & 255),
                                 alpha))
 
-        # God rays: soft diagonal bands from the surface.
+        # God rays: soft diagonal bands from the surface. They go out with
+        # the light, and moonlight is thinner than daylight.
         ray_depth = self.floor
-        for i in range(3):
+        ray_strength = 1.0 - 0.72 * self.night
+        for i in range(3 if self.night < 0.5 else 1):
             phase = t * (6 + i * 2.5) + i * 21.0
             head = (phase % (w + 60)) - 30
             width = 5 + i * 3
             for y in range(ray_depth):
                 f = y / float(ray_depth)
                 x0 = int(head + y * 0.55)
-                strength = (1.0 - f) * 0.30
+                strength = (1.0 - f) * 0.30 * ray_strength
                 if strength <= 0.01:
                     continue
                 for dx in range(width):
@@ -1857,13 +1994,16 @@ class Tank:
             idx = py * w + px
             c = buf[idx]
             col = ((c >> 16) & 255, (c >> 8) & 255, c & 255)
-            buf[idx] = pack(mix(col, SURFACE, 0.35))
+            buf[idx] = pack(mix(col, SURFACE, 0.35 * (1.0 - 0.6 * self.night)))
 
-        # Surface line.
+        # Surface line, dimmed after dark.
+        lit = 1.0 - 0.75 * self.night
+        top = pack(mix(night_colour(), SURFACE, lit))
+        under = pack(mix(night_colour(), mix(SURFACE, WATER_TOP, 0.35), lit))
         for x in range(w):
             y = int(1 + (math.sin(x * 0.22 + t * 1.6) + 1) * 0.9)
-            self.px(buf, x, y, pack(mix(SURFACE, WATER_TOP, 0.35)))
-            self.px(buf, x, max(0, y - 1), pack(SURFACE))
+            self.px(buf, x, y, under)
+            self.px(buf, x, max(0, y - 1), top)
 
         # Scenery, back to front.
         for far in self.backdrop:
@@ -2068,6 +2208,12 @@ def main():
                          "use by default, or name one to preview it")
     ap.add_argument("--no-theme", dest="theme", action="store_const",
                     const="none", help="use the built-in aquarium palette")
+    ap.add_argument("--night", nargs="?", const="cycle", default="cycle",
+                    metavar="LEVEL",
+                    help="the tank dims and settles for part of every 15 "
+                         "minutes; give a level 0-1 to hold it there")
+    ap.add_argument("--no-night", dest="night", action="store_const", const=0.0,
+                    help="keep the lights on")
     ap.add_argument("--logo", default=None, metavar="WHAT",
                     help="text art etched into the back wall: 'wordmark' "
                          "(the default), 'lockup' for the mark above the "
@@ -2081,6 +2227,12 @@ def main():
     ap.add_argument("--exit-on-unfocus", metavar="CLASS", default=None,
                     help="quit when this Hyprland window class loses focus")
     opts = ap.parse_args()
+
+    if opts.night not in ("cycle",):
+        try:
+            opts.night = clamp(float(opts.night), 0.0, 1.0)
+        except (TypeError, ValueError):
+            opts.night = "cycle"
 
     if opts.seed is not None:
         random.seed(opts.seed)

@@ -108,6 +108,24 @@ eats it and lets out a bubble. Whatever makes it to the sand is the crab's:
 it drops its patrol, hurries over and cleans up. Anything still uneaten after
 25 seconds dissolves.
 
+## Night
+
+Left alone, the tank has a day. Every fifteen minutes the light goes out of
+the water over a minute and a half, the god rays thin to a single shaft of
+moonlight, everything slows down, the fish sink toward a resting spot -- and
+the jellyfish keep their colour and pick up a faint halo, because they are
+the one thing in there that makes its own light. Then dawn brings it back.
+
+```bash
+fishtank --night 1      # hold it at night
+fishtank --no-night     # keep the lights on
+```
+
+Sprites are re-tinted when the light changes rather than the finished frame
+being blended, which would cost more per tick than the rest of the drawing
+put together. The level is quantised, so that runs a few dozen times a night
+instead of 24 times a second.
+
 ## Following your Omarchy theme
 
 The tank paints itself from the Omarchy theme you are running, by default.
@@ -229,6 +247,8 @@ fishtank [--theme [NAME] | --no-theme]
 
 | Flag | Meaning |
 | --- | --- |
+| `--night` | Hold the light at a level from 0 to 1 instead of cycling. |
+| `--no-night` | Keep the lights on. |
 | `--theme` | Omarchy theme to paint the tank from; the one in use by default, or name one to preview it. |
 | `--no-theme` | Use the built-in aquarium palette instead. |
 | `--fps` | Frame rate, default 24. |
@@ -252,6 +272,7 @@ tools/preview.py out.png [cols] [rows] [seconds] [scale]   # one frame as a PNG
 tools/sheet.py sheet.png [scale] [fish-width]              # every sprite, big
 
 PREVIEW_THEME=gruvbox tools/preview.py out.png                # themed preview
+PREVIEW_NIGHT=1 tools/preview.py out.png                      # after dark
 PREVIEW_LOGO=lockup tools/preview.py out.png                  # pick the logo
 PREVIEW_FEED=0.5 tools/preview.py out.png                     # mid-feed
 PREVIEW_LABEL="tokyo night" tools/preview.py out.png          # with the corner label

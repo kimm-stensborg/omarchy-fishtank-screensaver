@@ -24,6 +24,7 @@ spec.loader.exec_module(ft)
 
 class Opts:
     fish = None
+    night = float(os.environ["PREVIEW_NIGHT"]) if os.environ.get("PREVIEW_NIGHT") else "cycle"
     logo = os.environ.get("PREVIEW_LOGO", "auto")
     logo_opacity = float(os.environ.get("PREVIEW_LOGO_OPACITY", "0.16"))
 
