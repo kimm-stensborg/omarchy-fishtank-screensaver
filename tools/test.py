@@ -501,7 +501,7 @@ check("it is a service, not a widget", manifest.get("kinds") == ["service"])
 entry = manifest.get("entryPoints", {}).get("service")
 check("the service has an entry point", bool(entry))
 check("the entry point exists", entry and os.path.exists(os.path.join(ROOT, entry)))
-with open(os.path.join(ROOT, "Service.qml"), encoding="utf-8") as fh:
+with open(os.path.join(ROOT, manifest["entryPoints"]["service"]), encoding="utf-8") as fh:
     service = fh.read()
 check("the service answers to the plugin id", manifest["id"] in service)
 for call in ("function open()", "function feed()", "function stop()"):

@@ -25,6 +25,11 @@ The plugin is what lets the shell start the tank and feed it; `install.sh` is
 what points Omarchy's screensaver at it. There is nothing on the bar -- a
 screensaver is not a widget.
 
+If you had an earlier version of this plugin installed, run
+`omarchy restart shell` after adding it. The shell caches what is in a
+plugin's directory, and a directory whose files have changed identity since
+it was last looked at will not load until it has another look.
+
 Omarchy keeps doing the work -- one terminal per monitor, right window class,
 the same idle timing and the same lock screen. The install only shadows the
 two commands it runs, on a directory that comes earlier on `PATH`, and leaves

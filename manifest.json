@@ -6,6 +6,10 @@
   "author": "Kimm Stensborg",
   "license": "MIT",
   "description": "An 8-bit fish tank that runs as the Omarchy screensaver",
-  "kinds": ["service"],
-  "entryPoints": { "service": "Service.qml" }
+  "kinds": [
+    "service"
+  ],
+  "entryPoints": {
+    "service": "FishTank.qml"
+  }
 }
