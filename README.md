@@ -40,8 +40,15 @@ flaps, a dorsal fin, a gill line and a proper eye), seahorses hanging in the
 weeds, bottom feeders nosing along the sand with their barbels out, a
 pufferfish, drifting
 jellyfish, a crab that patrols the sand, bubbles from fish mouths and sand
-vents, swaying seaweed, a sandcastle, a treasure chest, god rays from the
-surface, drifting plankton and a rippling waterline.
+vents, swaying seaweed, god rays from the surface, drifting plankton and a
+rippling waterline.
+
+The floor is furnished differently every time. Two to five pieces are picked
+from a sandcastle, a treasure chest, a boulder pile, branching coral, a
+sunken log and an amphora, each generated at a size that suits the tank and
+placed where it does not crowd the others. Anything tall enough to be in the
+way is something the fish swim over rather than through, and the hollow ones
+let out the odd bubble.
 
 The smaller fish form loose shoals rather than each wandering off alone --
 they keep station on a school that drifts about the tank, breaking formation

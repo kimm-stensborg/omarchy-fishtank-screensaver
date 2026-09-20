@@ -387,6 +387,7 @@ def build_sprite_palettes(puffer=(236, 196, 92), jelly=(186, 126, 236),
     CASTLE_PALETTE.update({"s": SAND, "d": SAND_DARK})
     CHEST_PALETTE.clear()
     CHEST_PALETTE.update({"w": chest, "g": mix(chest, SAND, 0.30), "K": gold})
+    build_scenery_palettes()
 
 
 # -------------------------------------------------------------------- logo ---
@@ -531,7 +532,159 @@ def find_logo(choice, max_height=None):
     return logo_mask(os.path.expanduser(choice))
 
 
+def make_rocks(w, h):
+    """A pile of boulders, each with its own dark rim so the ones in front
+    stand out from the ones behind instead of merging into a slab."""
+    w = max(6, w)
+    h = max(4, h)
+    grid = [["." for _ in range(w)] for _ in range(h)]
+    rnd = random.Random(w * 31 + h)
+    stones = int(clamp(w // 9, 2, 5))
+    sizes = [rnd.uniform(0.4, 0.8) for _ in range(stones)]
+    sizes[rnd.randrange(stones)] = 1.0
+    order = sorted(range(stones), key=lambda i: sizes[i], reverse=True)
+
+    for i in order:                     # biggest first, so small ones overlap it
+        size = sizes[i]
+        rx = (i + 0.5) * w / float(stones) + rnd.uniform(-1.0, 1.0)
+        rw = max(1.5, w * 0.16 * (0.6 + size))
+        rh = max(1.5, h * size * rnd.uniform(0.7, 1.0))
+        ry = h - rh * rnd.uniform(0.05, 0.3)
+
+        def inside(px, py):
+            dx, dy = (px - rx) / rw, (py - ry) / rh
+            return dx * dx + dy * dy <= 1.0
+
+        for y in range(h):
+            for x in range(w):
+                if not inside(x, y):
+                    continue
+                rim = not (inside(x - 1, y) and inside(x + 1, y)
+                           and inside(x, y - 1) and inside(x, y + 1))
+                if rim:
+                    grid[y][x] = "d"
+                elif (y - ry) / rh < -0.3:
+                    grid[y][x] = "l"
+                else:
+                    grid[y][x] = "r"
+    return ["".join(row) for row in grid]
+
+
+def make_coral(w, h):
+    """Branching coral. Branches are walked in small steps with a thickness,
+    so they stay joined up instead of breaking into dashes."""
+    w = max(5, w | 1)
+    h = max(6, h)
+    grid = [["." for _ in range(w)] for _ in range(h)]
+    rnd = random.Random(w * 17 + h * 5)
+
+    def dab(x, y, r, key):
+        for dy in range(int(-r), int(r) + 1):
+            for dx in range(int(-r), int(r) + 1):
+                if dx * dx + dy * dy > r * r + 0.4:
+                    continue
+                px, py = int(round(x + dx)), int(round(y + dy))
+                if 0 <= px < w and 0 <= py < h and grid[py][px] != "c":
+                    grid[py][px] = key
+
+    def branch(x, y, angle, length, r, depth):
+        steps = max(2, int(length * 2))
+        for i in range(steps + 1):
+            t = i / float(steps)
+            px = x + math.sin(angle) * length * t
+            py = y - math.cos(angle) * length * t
+            dab(px, py, r, "c" if r > 1 else "b")
+            if depth and i == int(steps * 0.6):
+                for side in (-1, 1):
+                    branch(px, py, angle + side * rnd.uniform(0.5, 0.9),
+                           length * rnd.uniform(0.5, 0.7),
+                           max(0.8, r - 0.9), depth - 1)
+    branch((w - 1) / 2.0, h - 1, rnd.uniform(-0.2, 0.2), h * 0.62,
+           max(1.2, w / 7.0), 2)
+    return ["".join(row) for row in grid]
+
+
+def make_driftwood(w, h):
+    """A waterlogged log: a capsule with rounded ends, a knot or two, and a
+    stub of a branch still on it."""
+    w = max(8, w)
+    h = max(4, h)
+    grid = [["." for _ in range(w)] for _ in range(h)]
+    rnd = random.Random(w * 7 + h * 3)
+    top = max(1, h - max(3, int(h * 0.75)))
+    centre = (top + h - 1) / 2.0
+    for x in range(w):
+        t = (2.0 * x / float(w - 1)) - 1.0
+        half = ((h - 1 - top) / 2.0) * (1.0 - abs(t) ** 8) ** 0.5
+        if half < 0.4:
+            continue
+        lo, hi = int(round(centre - half)), int(round(centre + half))
+        for y in range(lo, hi + 1):
+            if 0 <= y < h:
+                grid[y][x] = "w" if y == lo else "g"
+    for _ in range(max(1, w // 12)):       # knots
+        kx = rnd.randrange(2, w - 2)
+        ky = int(centre)
+        if 0 <= ky < h and grid[ky][kx] != ".":
+            grid[ky][kx] = "w"
+    for _ in range(max(1, w // 14)):       # a stub sticking up
+        bx = rnd.randrange(3, w - 3)
+        lean = rnd.choice((-1, 1))
+        for i in range(1, rnd.randint(2, max(3, h // 2))):
+            by, px = int(centre) - i, bx + lean * (i // 2)
+            if 0 <= by < h and 0 <= px < w:
+                grid[by][px] = "g"
+    return ["".join(row) for row in grid]
+
+
+def make_amphora(w, h):
+    """A pot someone lost overboard, one handle short."""
+    w = max(5, w | 1)
+    h = max(6, h)
+    grid = [["." for _ in range(w)] for _ in range(h)]
+    cx = (w - 1) / 2.0
+    neck = max(1, int(h * 0.22))
+    for y in range(h):
+        f = y / float(h - 1)
+        if y < neck:
+            half = w * 0.16
+        else:
+            t = (y - neck) / float(max(1, h - neck))
+            half = (w / 2.0) * math.sin(min(1.0, 0.25 + t * 0.95) * math.pi) ** 0.6
+        lo, hi = int(round(cx - half)), int(round(cx + half))
+        for x in range(lo, hi + 1):
+            if 0 <= x < w:
+                grid[y][x] = "g" if x in (lo, hi) else "w"
+    for x in range(int(round(cx - w * 0.26)), int(round(cx + w * 0.26)) + 1):
+        if 0 <= x < w:
+            grid[0][x] = "g"               # the lip
+    shoulder = neck + 1
+    if shoulder < h and w >= 7:            # one handle
+        grid[shoulder][max(0, int(cx - w * 0.42))] = "g"
+        if shoulder + 1 < h:
+            grid[shoulder + 1][max(0, int(cx - w * 0.42))] = "g"
+    return ["".join(row) for row in grid]
+
+
+ROCK_PALETTE = {}
+CORAL_PALETTE = {}
+WOOD_PALETTE = {}
+
+
+def build_scenery_palettes():
+    ROCK_PALETTE.clear()
+    ROCK_PALETTE.update({"r": ROCK, "d": ROCK_DARK,
+                         "l": mix(ROCK, (255, 255, 255), 0.22)})
+    CORAL_PALETTE.clear()
+    coral = mix(SAND_LIGHT, (232, 110, 140), 0.55)
+    CORAL_PALETTE.update({"c": coral, "b": shade(coral, 0.72)})
+    WOOD_PALETTE.clear()
+    wood = mix(SAND_DARK, (90, 60, 40), 0.5)
+    WOOD_PALETTE.update({"w": wood, "g": shade(wood, 0.75)})
+
+
 build_sprite_palettes()
+build_scenery_palettes()
 
 # The hand-picked aquarium palette, kept aside so a theme can be undone.
 PALETTE_KEYS = ("WATER_TOP", "WATER_BOTTOM", "SURFACE", "RAY", "SAND",
@@ -1308,16 +1461,12 @@ class Fish:
             self.dir = -1
 
     def keep_clear(self):
-        """Nothing swims through the castle."""
-        box = self.tank.castle_box
-        if not box:
+        """Nothing swims through the scenery."""
+        for x0, y0, x1, y1 in self.tank.decor_boxes:
+            if self.x + self.w < x0 or self.x > x1 or self.y + self.h < y0:
+                continue
+            self.y = max(1, y0 - self.h - 1)
             return
-        x0, y0, x1, y1 = box
-        if self.x + self.w < x0 or self.x > x1 or self.y + self.h < y0:
-            return
-        self.y = y0 - self.h - 1
-        if self.y < 1:
-            self.y = 1
 
     def update(self, dt, now):
         if self.tank.flakes and self.hunt(dt):
@@ -1757,6 +1906,8 @@ class Tank:
         # Set before the travelling fish exist, because they ask about it as
         # soon as they place themselves.
         self.world_feed = 0.0
+        self.decor_boxes = []
+        self.vents = []
 
         self.water = self._water_rows()
         self.sand = self._sand()
@@ -1957,36 +2108,81 @@ class Tank:
         self.sand_top = top
         return pixels
 
-    def _decor(self):
-        items = []
-        castle_h = int(clamp(round(self.h * 0.22), 7, 40))
-        castle = Sprite.from_art(make_castle(int(castle_h * 1.55), castle_h),
-                                 CASTLE_PALETTE)
-        cx = int(self.w * random.uniform(0.12, 0.7))
-        cx = clamp(cx, 1, max(1, self.w - castle.w - 1))
-        castle_y = self.floor - castle.h + 2
-        items.append((castle, cx, castle_y))
-        self.castle_rect = (cx, castle.w)
-        self.castle_box = (cx, castle_y, cx + castle.w, castle_y + castle.h)
+    # What can be on the floor of a tank, and how big it is relative to the
+    # tank. Weights are how often each turns up; the castle is the one thing
+    # that never appears twice.
+    SCENERY = (
+        ("castle", 3, 0.22, 1.55, "CASTLE_PALETTE", "make_castle", False),
+        ("chest", 3, 0.075, 1.70, "CHEST_PALETTE", "make_chest", True),
+        ("rocks", 3, 0.11, 1.90, "ROCK_PALETTE", "make_rocks", False),
+        ("coral", 3, 0.20, 0.75, "CORAL_PALETTE", "make_coral", False),
+        ("driftwood", 2, 0.07, 3.80, "WOOD_PALETTE", "make_driftwood", False),
+        ("amphora", 2, 0.13, 0.65, "WOOD_PALETTE", "make_amphora", True),
+    )
 
-        chest_h = int(clamp(round(self.h * 0.075), 4, 14))
-        chest = Sprite.from_art(make_chest(int(chest_h * 1.7), chest_h),
-                                CHEST_PALETTE)
-        for _ in range(12):
-            ox = random.randrange(0, max(1, self.w - chest.w))
-            if abs(ox - cx) > castle.w + 2:
-                items.append((chest, ox, self.floor - chest.h + 2))
-                self.chest_x = ox + chest.w // 2
+    def _decor(self):
+        """Furnish the floor with a handful of pieces, different every time.
+
+        Anything tall enough to be in the way is remembered as a box, so fish
+        swim over it rather than through it, and the hollow pieces are
+        remembered as places a bubble can come out of.
+        """
+        bag = []
+        for name, weight, _, _, _, _, _ in self.SCENERY:
+            bag += [name] * weight
+        random.shuffle(bag)
+
+        wanted = int(clamp(self.w // 55, 2, 5))
+        picks, seen = [], set()
+        for name in bag:
+            if name in seen and name in ("castle", "chest"):
+                continue
+            seen.add(name)
+            picks.append(name)
+            if len(picks) >= wanted:
                 break
-        else:
-            self.chest_x = None
+
+        items = []
+        self.decor_boxes = []
+        self.vents = []
+        taken = []
+        for name in picks:
+            spec = next(row for row in self.SCENERY if row[0] == name)
+            _, _, height, ratio, palette, maker, hollow = spec
+            piece_h = int(clamp(round(self.h * height), 4, 44))
+            piece_w = max(5, int(round(piece_h * ratio)))
+            if piece_w > self.w * 0.45:
+                continue                       # no room for this one here
+            sprite = Sprite.from_art(globals()[maker](piece_w, piece_h),
+                                     globals()[palette])
+
+            for _ in range(24):
+                x = random.randrange(1, max(2, self.w - sprite.w - 1))
+                if all(x + sprite.w + 3 < a or x > b + 3 for a, b in taken):
+                    break
+            else:
+                continue
+            taken.append((x, x + sprite.w))
+            y = self.floor - sprite.h + 2
+            items.append((sprite, x, y))
+            if sprite.h > self.h * 0.07:
+                self.decor_boxes.append((x, y, x + sprite.w, y + sprite.h))
+            if hollow:
+                self.vents.append(x + sprite.w // 2)
+
+        # Kept for the weeds, which give the biggest piece a wide berth.
+        tallest = max(self.decor_boxes, key=lambda b: b[3] - b[1],
+                      default=None)
+        self.castle_rect = (tallest[0], tallest[2] - tallest[0]) if tallest else (0, 0)
         return items
 
     def _weed_positions(self):
         spots = []
         x = random.randrange(0, 8)
         while x < self.w:
-            if not (self.castle_rect[0] - 2 <= x <= self.castle_rect[0] + self.castle_rect[1] + 1):
+            clear = all(x < x0 - 2 or x > x1 + 1
+                        for x0, _, x1, _ in self.decor_boxes)
+            if clear:
                 spots.append(x)
             x += random.randrange(5, 16)
         return spots
@@ -2131,8 +2327,8 @@ class Tank:
         # Sand vents and the treasure chest puff bubbles now and then.
         if now > self.vent_at:
             self.vent_at = now + random.uniform(0.35, 1.6)
-            if self.chest_x is not None and random.random() < 0.45:
-                x = self.chest_x + random.uniform(-2, 2)
+            if self.vents and random.random() < 0.45:
+                x = random.choice(self.vents) + random.uniform(-2, 2)
             else:
                 x = random.uniform(0, self.w)
             y = self.sand_top[int(clamp(x, 0, self.w - 1))] - 1

@@ -111,13 +111,13 @@ for cols, rows in ((160, 45), (320, 81)):
     check("%dx%d has shoals" % (cols, rows), len(tank.schools) > 0)
     shoaling = [a for a in tank.actors if getattr(a, "school", None) is not None]
     check("%dx%d has fish in the shoals" % (cols, rows), len(shoaling) >= 3)
-    if tank.castle_box:
-        x0, y0, x1, y1 = tank.castle_box
-        inside = [a for a in tank.actors
-                  if isinstance(a, ft.Fish) and not isinstance(a, ft.BottomFeeder)
-                  and a.x + a.w > x0 and a.x < x1 and a.y + a.h > y0 and a.y < y1]
-        check("%dx%d: nothing swims through the castle" % (cols, rows), not inside,
-              "%d inside" % len(inside))
+    inside = [a for a in tank.actors
+              if isinstance(a, ft.Fish) and not isinstance(a, ft.BottomFeeder)
+              and any(a.x + a.w > x0 and a.x < x1 and a.y + a.h > y0 and a.y < y1
+                      for x0, y0, x1, y1 in tank.decor_boxes)]
+    check("%dx%d: nothing swims through the scenery" % (cols, rows), not inside,
+          "%d inside" % len(inside))
+    check("%dx%d has scenery" % (cols, rows), len(tank.decor) > 0)
     check("%dx%d has a far layer" % (cols, rows), len(tank.backdrop) > 0)
     check("%dx%d has fronds up front" % (cols, rows), len(tank.front_weeds) > 0)
 
@@ -268,6 +268,30 @@ for size in (5, 9, 17):
 for w in (5, 9, 17):
     check("jelly at %d has tentacles" % w,
           any("t" in row for row in ft.make_jelly(w, int(w * 1.6))))
+
+# -- scenery is different every time, and never stacked -------------------
+
+layouts = set()
+for seed in range(12):
+    random.seed(seed)
+    tank = ft.Tank(320, 81, Opts())
+    spread = []
+    for sprite, x, y in tank.decor:
+        spread.append((x, x + sprite.w))
+        check("scenery sits on the floor",
+              y + sprite.h >= tank.floor and y >= 0)
+    spread.sort()
+    overlap = any(spread[i][1] > spread[i + 1][0] for i in range(len(spread) - 1))
+    check("scenery does not stack up", not overlap, str(spread))
+    layouts.add(tuple(sorted((x, s.w, s.h) for s, x, _ in tank.decor)))
+check("scenery differs between tanks", len(layouts) >= 8,
+      "%d different layouts in 12" % len(layouts))
+
+for cols, rows in ((96, 30), (320, 81)):
+    random.seed(2)
+    tank = ft.Tank(cols, rows, Opts())
+    check("%dx%d scenery fits the tank" % (cols, rows),
+          all(x >= 0 and x + s.w <= tank.w for s, x, _ in tank.decor))
 
 # -- the clock ---------------------------------------------------------------
 
