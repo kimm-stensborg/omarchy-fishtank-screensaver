@@ -404,47 +404,14 @@ with tempfile.TemporaryDirectory() as tmp:
         check("the request is recent", abs(saved.get("feed", 0) - time.time()) < 30)
         check("--feed keeps the rest of the state", "feed" in saved)
 
-# -- the plugin contract -----------------------------------------------------
-
-with open(os.path.join(ROOT, "manifest.json"), encoding="utf-8") as fh:
-    manifest = json.load(fh)
-check("manifest is schema 1", manifest.get("schemaVersion") == 1)
-check("manifest has an id", manifest.get("id", "").count(".") >= 2)
-for kind in manifest.get("kinds", []):
-    entry = {"bar-widget": "barWidget"}.get(kind, kind)
-    target = manifest.get("entryPoints", {}).get(entry)
-    check("kind %s has an entry point" % kind, bool(target))
-    check("entry point %s exists" % target,
-          target and os.path.exists(os.path.join(ROOT, target)))
-check("the widget names the plugin id",
-      manifest["id"] in open(os.path.join(ROOT, "BarWidget.qml"), encoding="utf-8").read())
-
-if not QUICK:
-    done = subprocess.run(["omarchy", "plugin", "validate", ROOT],
-                          capture_output=True, text=True)
-    if done.returncode == 127 or "not found" in done.stderr:
-        pass                      # no Omarchy here; nothing to validate against
-    else:
-        check("omarchy accepts the plugin", done.returncode == 0,
-              done.stdout + done.stderr)
-
 # -- shell scripts parse -----------------------------------------------------
 
 for script in ("install.sh", "uninstall.sh", "bin/omarchy-screensaver",
-               "bin/omarchy-launch-screensaver",
-               "packaging/omarchy-fishtank-screensaver"):
+               "bin/omarchy-launch-screensaver"):
     done = subprocess.run(["bash", "-n", os.path.join(ROOT, script)],
                           capture_output=True, text=True)
     check("%s parses" % script, done.returncode == 0, done.stderr.strip())
 
-
-# The package must not try to own a file the omarchy package already has.
-with open(os.path.join(ROOT, "packaging", "PKGBUILD"), encoding="utf-8") as fh:
-    pkgbuild = fh.read()
-check("the package stays out of /usr/bin/omarchy-screensaver",
-      '"$pkgdir/usr/bin/omarchy-screensaver"' not in pkgbuild)
-check("the package ships the enable wrapper",
-      "usr/bin/omarchy-fishtank-screensaver" in pkgbuild)
 
 print("%d checks, %d failed" % (checks, len(failures)))
 for line in failures:

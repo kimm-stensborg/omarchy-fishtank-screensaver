@@ -1,241 +1,18 @@
-# omarchy-fishtank-screensaver
+# Fish Tank
 
-An 8-bit fish tank that runs as the Omarchy screensaver.
+An 8-bit fish tank that runs as the Omarchy screensaver. It is drawn with
+half-block characters and truecolor, so a terminal cell holds two square
+pixels and the whole thing is pixel art rather than ASCII art. It takes its
+colours from the Omarchy theme you are running, spreads one ocean across your
+monitors, and can be fed.
 
-![the tank](preview.gif)
+![Fish Tank](preview.gif)
 
-<sub>Still: [preview.png](preview.png)</sub>
-
-Everything is drawn with half-block characters (`▀`) and truecolor, so one
-terminal cell holds two square pixels and the whole thing is pixel art rather
-than ASCII art. No dependencies beyond Python 3.
-
-The Omarchy wordmark is etched into the back wall of the tank, read straight
-from `$OMARCHY_PATH/logo.txt`. It is block art, so one character cell maps
-onto two pixels and it lands on the pixel grid exactly. Thick strokes catch a
-highlight on top and drop a shadow underneath, which makes it read as carved
-glass rather than a sticker pasted on the water.
-
-`--logo lockup` stacks the mark from `icon.txt` above the wordmark instead.
-The mark is built on a 4x4 pixel grid, so it is only ever shrunk by a whole
-number -- a fractional resize smears those strokes into grey mush. A tall tank
-gets it at full size; a short one halves it so the lockup still fits above the
-sand.
-
-Everything is sized from the tank rather than in fixed pixels: fish are a
-fraction of the canvas height, with the ones far back small and dim and the
-ones near the glass large, and the logo shrinks to fit a narrow tank. The
-castle, chest, pufferfish and jellyfish are generated at whatever size the
-tank has room for, rather than drawn once and doubled -- doubling only some
-of the art put chunky pixels next to smooth ones, which reads as two
-different pictures on the same screen. One pixel size everywhere, at any
-resolution.
-
-The tank has front-to-back depth: shapes too far away to have colour drift
-across the back wall, and a few fronds close to the glass pass in front of
-everything, darker and bluer the way a near foreground goes.
-
-Swimming in the tank: generated fish species (each with a forked tail that
-flaps, a dorsal fin, a gill line and a proper eye), seahorses hanging in the
-weeds, bottom feeders nosing along the sand with their barbels out, a
-pufferfish, drifting
-jellyfish, a crab that patrols the sand, bubbles from fish mouths and sand
-vents, swaying seaweed, god rays from the surface, drifting plankton and a
-rippling waterline.
-
-The floor is furnished differently every time. Two to five pieces are picked
-from a sandcastle, a treasure chest, a boulder pile, branching coral, a
-sunken log and an amphora, each generated at a size that suits the tank and
-placed where it does not crowd the others. Anything tall enough to be in the
-way is something the fish swim over rather than through, and the hollow ones
-let out the odd bubble.
-
-The smaller fish form loose shoals rather than each wandering off alone --
-they keep station on a school that drifts about the tank, breaking formation
-to chase food and settling back afterwards. Nothing swims through the
-sandcastle.
-
-## Terminal size
-
-Omarchy opens the screensaver terminal at font size 18. That suits text
-effects, but it leaves the tank about 96x60 pixels on a scaled laptop panel --
-a quarter of what an everyday terminal gives -- and the fish come out coarse
-and few. So the install also shadows `omarchy-launch-screensaver`, which opens
-it at size 12 instead: roughly 160x90 pixels on that same panel and 266x136 on
-a 1440p monitor.
-
-```bash
-printf -- '--font-size 10\n' > ~/.config/fishtank.conf   # finer still
-printf -- '--font-size 18\n' > ~/.config/fishtank.conf   # Omarchy's original grid
-```
-
-The shadow does not copy Omarchy's launcher -- its multi-monitor handling
-belongs upstream and should keep working through updates. It points
-`OMARCHY_PATH` at a mirror of Omarchy's tree, every entry symlinked back to
-the original except the terminal's screensaver config, which is ours, and then
-hands off to the real launcher. That is the only thing the launcher reads
-`OMARCHY_PATH` for. Ghostty and Kitty take their font size as a command-line
-flag the launcher sets itself, so those two keep size 18.
-
-## Keys
-
-Four keys do things while the tank is running; every other key exits, so the
-screensaver still behaves itself. They work the same when you run `fishtank`
-in a terminal by hand.
-
-| Key | Does |
-| --- | --- |
-| F1 | Next installed theme -- walks every theme in `~/.config/omarchy/themes` and `$OMARCHY_PATH/themes` |
-| F2 | Back to the theme the desktop is wearing |
-| F3 | Cycle the back wall: wordmark, lockup, mark, nothing |
-| F4 | Feed the fish |
-| F5 | Flip the light: dark if it is light, light if it is dark |
-| Shift+F5 | Hand the light back to the day-and-night cycle |
-| F6 | The time in the corner: 24-hour, 12-hour, or off |
-
-F1, F2, F3, F5 and F6 name what they just picked in the top-left corner, in the tank's
-own pixels, and the text fades out after two seconds. **What you pick is what
-the tank opens with next time** -- it is written to
-`$XDG_STATE_HOME/fishtank/state.json` and read at startup, so you can leave
-the screensaver on the theme you liked. A flag on the command line still wins
-over the saved choice.
-
-A screensaver runs one tank per monitor, and a keypress only reaches the
-focused one, so each tank also watches that file and follows it. Press F1 on
-one screen and the others change with it, and the choice that gets remembered
-is the one you last made rather than whichever screen happened to be
-focused.
-
-Switching theme repaints the tank you were already watching rather than
-generating a new one: the layout seed is held across the rebuild, so the same
-castle, the same weeds, in new colours.
-
-### The clock
-
-F6 puts the time in the top-right corner, in the tank's own pixels, dimmed
-with the light so it does not glare after dark. `--clock`, `--clock 12` and
-`--no-clock` set it from the command line, and like the other keys the choice
-is remembered and shared across monitors.
-
-### Feeding
-
-F4 sprinkles food across the surface -- on every monitor, not just the one
-you pressed it on. Flakes sink and wobble; every fish has
-its own eyesight, between roughly 24 and 68 pixels, so the shoal notices in
-dribs rather than turning as one -- the near ones dart up first, the rest
-drift over as the food falls into their range. A fish that reaches a flake
-eats it and lets out a bubble. Whatever makes it to the sand is the crab's:
-it drops its patrol, hurries over and cleans up. Anything still uneaten after
-25 seconds dissolves.
-
-The fish travelling through the ocean eat too, and that needs care: they have
-no shared state to agree about who got what. So a feed is a deterministic
-event like everything else about them -- from its timestamp and a fish's
-number, every monitor works out the same fish going after the same crumb at
-the same moment, and one that is halfway through its lunge as it crosses a
-screen edge keeps lunging on the next screen.
-
-## One ocean
-
-With more than one monitor, the screensaver runs a tank on each -- and they
-are windows onto the same ocean. A fish that leaves the right edge of one
-screen arrives at the left edge of the next, at the moment it should, the
-right size and at the right depth.
-
-While a tank is part of an ocean, its own fish turn back at the glass, so a
-fish leaving the screen means it has genuinely gone to the next monitor
-rather than wrapping around to the other side of the same one. At any moment
-a few are mid-crossing.
-
-They manage it without talking to each other. Each tank works out which
-monitor it is on (its window's process, matched against Hyprland's client
-list) and where that monitor sits in the layout. The fish that travel are
-then a closed form: position is a function of the fish's number, a fixed
-seed and the wall clock, so every screen computes the same answer
-independently. Nothing is synchronised because nothing needs to be.
-
-Monitors of different sizes are still each their own body of water, so a fish
-crossing between screens of different heights shifts a little vertically as
-it goes; between matching monitors it is seamless.
-
-`--no-ocean` keeps each screen's fish to itself. A single monitor is its own
-ocean and the code stays out of the way.
-
-## Night
-
-Left alone, the tank has a day. Every fifteen minutes the light goes out of
-the water over a minute and a half, the god rays thin to a single shaft of
-moonlight, everything slows down, the fish sink toward a resting spot -- and
-the jellyfish keep their colour and pick up a faint halo, because they are
-the one thing in there that makes its own light. Then dawn brings it back.
-
-F5 flips whatever is on screen right now rather than stepping through modes,
-so it always changes something you can see; Shift+F5 hands the light back to
-the cycle.
-
-```bash
-fishtank --night 1      # hold it at night
-fishtank --no-night     # keep the lights on
-```
-
-Sprites are re-tinted when the light changes rather than the finished frame
-being blended, which would cost more per tick than the rest of the drawing
-put together. The level is quantised, so that runs a few dozen times a night
-instead of 24 times a second.
-
-## Following your Omarchy theme
-
-The tank paints itself from the Omarchy theme you are running, by default.
-
-```bash
-fishtank                    # the theme in use (or the last one you picked with F1)
-fishtank --theme gruvbox    # try one on without switching to it
-fishtank --no-theme         # the built-in aquarium palette instead
-```
-
-The palette comes from `omarchy-theme-color`, the same resolver every other
-Omarchy consumer uses, so a third-party theme that only defines `color0..15`
-still works. Colours are chosen by hue rather than by name -- matte-black
-calls a red "yellow" and rose-pine calls a blue "green" -- so the water takes
-the coolest colour in the theme, the sand the warmest, the plants the
-greenest, and the fish whatever is left that is loud. A theme with no cool
-hue at all gets an inky tank rather than a mis-tinted one, and in a light
-theme the logo is cut into the water darker instead of lighter.
-
-`omarchy-launch-screensaver` takes no arguments of its own, so anything you
-want the screensaver to run with goes in `~/.config/fishtank.conf`, one flag
-per line:
-
-```bash
-printf -- '--logo lockup\n--font-size 10\n' > ~/.config/fishtank.conf
-```
-
-`--font-size` is read by the launcher rather than passed to the tank; every
-other line goes to `fishtank` as an argument.
+- **License:** MIT
+- **Requires:** Omarchy 4 (Quattro), Python 3, and one of Alacritty, Foot,
+  Ghostty or Kitty
 
 ## Install
-
-As an Omarchy plugin:
-
-```bash
-omarchy plugin add https://github.com/kimm-stensborg/omarchy-fishtank-screensaver.git --enable
-~/.config/omarchy/plugins/io.github.kimm-stensborg.fishtank/install.sh
-```
-
-That puts a fish in the bar -- click it to dive into the tank now rather than
-waiting for the idle timeout, middle-click to drop food into whatever tanks
-are already running. The `install.sh` line is what points Omarchy's
-screensaver at the tank; the widget works without it, it just has nothing to
-feed until the screensaver runs.
-
-From the AUR:
-
-```bash
-yay -S omarchy-fishtank-screensaver
-omarchy-fishtank-screensaver enable
-```
-
-Or from a plain checkout:
 
 ```bash
 git clone https://github.com/kimm-stensborg/omarchy-fishtank-screensaver.git
@@ -243,62 +20,127 @@ cd omarchy-fishtank-screensaver
 ./install.sh
 ```
 
-The package installs the program but does not switch your screensaver over --
-`enable` does that, and runs the same script a checkout does, so both ways
-behave identically. It owns no file that the `omarchy` package owns, so
-pacman never has to arbitrate between them. `fishtank` on its own is always
-available either way.
+Omarchy keeps doing the work -- one terminal per monitor, right window class,
+the same idle timing and the same lock screen. The install only shadows the
+two commands it runs, on a directory that comes earlier on `PATH`, and leaves
+everything else alone. Nothing under `/usr/share/omarchy` is touched, so an
+`omarchy update` will not fight with it.
 
-That symlinks `bin/fishtank`, `bin/omarchy-screensaver` and
-`bin/omarchy-launch-screensaver` onto a directory that comes earlier on `PATH`
-than Omarchy's own copies, so the menu item and the shell's idle service both
-find these first. Omarchy keeps doing the work -- one terminal per monitor,
-right window class -- it just runs a fish tank in them.
+Which directory that is depends on the machine, and `install.sh` works it out.
+Omarchy ships its commands as `/usr/bin/omarchy-*` and only *appends*
+`~/.local/bin` to `PATH`, so on a stock install a symlink there is never
+reached and `/usr/local/bin` is used instead, with `sudo`; if you prepend
+`~/.local/bin` yourself, no root is needed. `--user` and `--system` force
+either. It finishes by printing what `omarchy-launch-screensaver` now resolves
+to, from both the login shell (where the menu runs it) and the Wayland session
+(where the shell's idle service does), and fails rather than leaving you with
+symlinks that nothing will reach.
 
-Which directory that is depends on the machine, and `install.sh` works it out:
-
-- Omarchy ships its commands as `/usr/bin/omarchy-*` and only *appends*
-  `~/.local/bin` to `PATH`, so on a stock install a symlink there is never
-  reached. Then `/usr/local/bin` is used instead, which needs `sudo`.
-- If you prepend `~/.local/bin` yourself, no root is needed and that is used.
-
-`--user` and `--system` force either. Whichever it picks, it finishes by
-printing what `omarchy-launch-screensaver` now resolves to from both the login
-shell (where the menu runs it) and the Wayland session (where the idle service
-does), and fails loudly rather than leaving you with symlinks that are never
-reached:
-
-```
-  login: /usr/local/bin/omarchy-launch-screensaver  (the fish tank)
-  session: /usr/local/bin/omarchy-launch-screensaver  (the fish tank)
-```
-
-Nothing under `/usr/share/omarchy` is touched, so an `omarchy update` will not
-fight with it, and `./uninstall.sh` hands the screensaver straight back to
-stock.
-
-Omarchy has no channel of its own for *screensavers*: officially you swap the
-ASCII art (`omarchy branding screensaver`). The plugin system is for
-Quickshell components, so the bar widget is a real plugin while the tank
-itself stays what it is -- a terminal program the screensaver runs. That is
-also what other third-party screensavers do: a git repo and an install script
-that points the screensaver at another program. Shadowing the binary on
-`PATH` is the lightest version of it -- no shell plugin is cloned, no
-launcher is rewritten, and idle timing, "stay awake" and the lock screen keep
-working exactly as they were.
-
-Try it:
+Try it with **Omarchy menu → System → Screensaver**, or:
 
 ```bash
 omarchy-launch-screensaver force   # the real thing, any key exits
 fishtank                           # just the tank, Ctrl-C exits
 ```
 
-### Requirements
+## Use
 
-Omarchy 4, Python 3 (no third-party modules), and a terminal the stock
-screensaver already supports: Alacritty, Foot, Ghostty or Kitty. Truecolor is
-assumed, which all four do.
+Six keys do something while it runs; every other key exits, so the screensaver
+still behaves itself. They work the same if you run `fishtank` in a terminal
+by hand.
+
+| Key | Does |
+| --- | --- |
+| `F1` | Next installed theme |
+| `F2` | Back to the theme your desktop is wearing |
+| `F3` | The logo on the back wall: wordmark, lockup, mark, nothing |
+| `F4` | Feed the fish |
+| `F5` | Flip the light: dark if it is light, light if it is dark |
+| `Shift + F5` | Hand the light back to the day-and-night cycle |
+| `F6` | The clock: 24-hour, 12-hour, off |
+
+- **What you pick is remembered.** It is written to
+  `$XDG_STATE_HOME/fishtank/state.json` and read at startup, so the tank opens
+  the way you left it. A flag on the command line wins over the saved choice.
+- **Every screen follows.** A keypress only reaches the monitor with focus, so
+  each tank watches that file: press `F1` on one screen and the others change
+  with it, and what gets remembered is the choice you last made rather than
+  whichever screen happened to be focused.
+- **Feeding.** `F4` sprinkles food across the surface of every monitor. Each
+  fish has its own eyesight, so the shoal notices in dribs rather than turning
+  as one -- the near ones dart up first and the rest drift over as the food
+  falls into range. Whatever reaches the sand is the crab's: it drops its
+  patrol, hurries over and cleans up.
+- **Night.** Left alone, the tank has a day. Every fifteen minutes the light
+  goes out of the water, the god rays thin to one shaft of moonlight,
+  everything slows and the fish sink toward a resting spot -- and the
+  jellyfish keep their colour and pick up a faint halo, being the one thing in
+  there that makes its own light.
+- **The clock** sits in the top-right corner, in the tank's own pixels, dimmed
+  with the light so it does not glare after dark.
+
+## In the tank
+
+- **Your theme.** The palette comes from `omarchy-theme-color`, the same
+  resolver every other Omarchy consumer uses, so a third-party theme that only
+  defines `color0..15` works too. Colours are chosen by hue rather than by
+  name -- matte-black calls a red "yellow" and rose-pine calls a blue "green"
+  -- so the water takes the coolest colour in the theme, the sand the warmest,
+  the plants the greenest, and the fish whatever is left that is loud.
+- **One ocean.** With more than one monitor the tanks are windows onto the
+  same ocean: a fish that leaves the right edge of one screen arrives at the
+  left edge of the next, at the moment it should, the right size and at the
+  right depth. They manage it without talking to each other -- each tank works
+  out which monitor it is on and where that monitor sits in the layout, and a
+  travelling fish is a closed form of its number, a fixed seed and the wall
+  clock, so every screen computes the same answer alone. The fish that belong
+  to a screen turn back at the glass, so one leaving it has genuinely gone
+  next door.
+- **Life.** Generated fish species, each with a forked tail that flaps, a
+  dorsal fin, a gill line and an eye. The smaller ones hold station on a shoal
+  that drifts about the tank, breaking formation for food and settling back
+  afterwards. Seahorses hang in the weeds, bottom feeders nose along the sand
+  with their barbels out, a pufferfish drifts, jellyfish pulse, and a crab
+  patrols the floor.
+- **A floor that is different every time.** Two to five pieces picked from a
+  sandcastle, a treasure chest, a boulder pile, branching coral, a sunken log
+  and an amphora, each generated at a size that suits the tank. Fish swim over
+  anything tall enough to be in the way, weeds keep out of the furniture, and
+  bubbles rise from whichever pieces are hollow.
+- **Depth.** Shapes too far away to have colour drift along the back wall, and
+  a few fronds close to the glass pass in front of everything.
+- **The Omarchy logo**, etched into the back wall from `logo.txt`, catching a
+  highlight on top and dropping a shadow underneath so it reads as carved
+  glass rather than a sticker.
+
+## Settings
+
+Omarchy's launcher takes no arguments of its own, so anything you want the
+screensaver to run with goes in `~/.config/fishtank.conf`, one flag per line:
+
+```bash
+printf -- '--font-size 10\n--logo lockup\n' > ~/.config/fishtank.conf
+```
+
+`--font-size` is read by the launcher; every other line is passed to the tank.
+
+| Flag | Meaning |
+| --- | --- |
+| `--font-size` | Terminal font size for the screensaver, default 12. Omarchy uses 18, which leaves the tank about 96x60 pixels on a scaled laptop panel; 10 is finer and costs more. Foot and Alacritty only -- Ghostty and Kitty take their size on the command line, where the launcher sets it. |
+| `--theme` | Omarchy theme to paint the tank from; the one in use by default, or name one. |
+| `--no-theme` | The built-in aquarium palette instead. |
+| `--night` | Hold the light at a level from 0 to 1 instead of cycling. |
+| `--no-night` | Keep the lights on. |
+| `--clock` | `--clock`, `--clock 12` or `--no-clock`. |
+| `--logo` | `wordmark` (default), `lockup`, `mark`, a path to your own text art, or `none`. |
+| `--no-ocean` | Keep this screen's fish to itself. |
+| `--feed` | Sprinkle food into every tank that is running, then exit. |
+| `--fish` | How many fish; by default it scales with the tank. |
+| `--fps` | Frame rate, default 24. |
+| `--seed` | Fixed layout, handy for screenshots. |
+
+A full-screen tank costs 2.5 ms per frame at 160x90 and about 7 ms at
+320x160, so one screen idles at 6-18% of a core depending on `--font-size`.
 
 ## Uninstall
 
@@ -307,74 +149,32 @@ assumed, which all four do.
 ./uninstall.sh --purge    # and delete ~/.config/fishtank.conf too
 ```
 
-It cleans both `~/.local/bin` and `/usr/local/bin` (asking for `sudo` only if
-there is something of ours in the latter).
-
-It removes the two symlinks and the saved F-key state, then checks what
-`omarchy-launch-screensaver` will find from now on and prints it, exiting
-non-zero if anything is still shadowing the stock binary. Since nothing else
-was ever touched -- no files under `/usr/share/omarchy`, no plugin clone, no
-edited launcher, no Hyprland config -- that is the whole of it: the next idle
-timeout gives you Omarchy's own screensaver back.
-
-It only deletes symlinks that point at a checkout of this project, so a
-`fishtank` or `omarchy-screensaver` of your own in `~/.local/bin` is reported
-and left alone. It is safe to run twice, and it works from any clone -- you do
-not need the one you installed from.
-
-## Options
-
-```
-fishtank [--theme [NAME] | --no-theme]
-         [--fps N] [--fish N] [--seed N] [--frames N]
-         [--logo wordmark|lockup|mark|PATH|none] [--logo-opacity F]
-         [--exit-on-key] [--exit-on-unfocus CLASS]
-```
-
-| Flag | Meaning |
-| --- | --- |
-| `--feed` | Sprinkle food into every tank that is running, then exit. |
-| `--no-ocean` | Keep this screen's fish to itself rather than sharing one ocean across monitors. |
-| `--night` | Hold the light at a level from 0 to 1 instead of cycling. |
-| `--no-night` | Keep the lights on. |
-| `--theme` | Omarchy theme to paint the tank from; the one in use by default, or name one to preview it. |
-| `--no-theme` | Use the built-in aquarium palette instead. |
-| `--fps` | Frame rate, default 24. |
-| `--fish` | How many fish; by default it scales with the size of the terminal. |
-| `--seed` | Fixed layout, handy for screenshots. |
-| `--frames` | Render N frames and quit (testing). |
-| `--logo` | What to etch on the back wall: `wordmark` (the default), `lockup` for the mark above the wordmark, `mark`, a path to your own text art, or `none`. |
-| `--logo-opacity` | How strongly it shows through, default `0.26`. |
-| `--exit-on-key` | Quit on any keypress — screensaver mode. |
-| `--exit-on-unfocus` | Quit when the given Hyprland window class loses focus. |
-
-A full-screen tank costs 2.5 ms per frame at 160x90 and 5.6 ms at 266x136, so
-at 24 fps one screen idles at 6-13% of a core. `--font-size` is the dial:
-a finer grid looks better and costs more.
+It removes the symlinks and the saved state, then prints what
+`omarchy-launch-screensaver` will find from now on. It only deletes symlinks
+pointing at a checkout of this project, works from any clone, and is safe to
+run twice.
 
 ## Development
 
 ```bash
-./test.sh [--quick]                                        # the checks
-tools/make_gif.py out.gif [cols] [rows] [secs] [scale] [fps]  # animated preview
-tools/preview.py out.png [cols] [rows] [seconds] [scale]   # one frame as a PNG
-tools/sheet.py sheet.png [scale] [fish-width]              # every sprite, big
+./test.sh [--quick]                                           # the checks
+tools/preview.py out.png [cols] [rows] [seconds] [scale]      # a frame as a PNG
+tools/make_gif.py out.gif [cols] [rows] [secs] [scale] [fps]  # animated
+tools/sheet.py sheet.png [scale] [fish-width]                 # every sprite, big
 
-PREVIEW_THEME=gruvbox tools/preview.py out.png                # themed preview
-PREVIEW_NIGHT=1 tools/preview.py out.png                      # after dark
-PREVIEW_LOGO=lockup tools/preview.py out.png                  # pick the logo
-PREVIEW_FEED=0.5 tools/preview.py out.png                     # mid-feed
-PREVIEW_LABEL="tokyo night" tools/preview.py out.png          # with the corner label
+PREVIEW_THEME=gruvbox PREVIEW_NIGHT=1 tools/preview.py out.png
 ```
 
 `test.sh` is worth running after any change to the drawing: every case in it
 stands for something that broke once -- a theme whose colours are named after
-other colours, a canvas too small for the logo, symlinks that PATH never
-reaches, a state file left over from a previous run.
+other colours, a canvas too small for the logo, fish that swelled to fill a
+coarse grid, symlinks on a `PATH` that never reaches them, a pufferfish with
+nowhere to sleep.
 
-The fish are generated rather than hand-drawn: `fish_art()` in `bin/fishtank`
-paints a tail fan, a teardrop body over its root, fins, a pattern (`bands`,
-`stripe`, `spots` or `plain`), a face, and then a dark outline around the lot.
-A species is one row in `SPECIES` — body, belly, accent and pattern — so adding
-a new fish is a one-line change. The hand-drawn sprites (puffer, jellyfish,
-crab, castle, chest) are plain string art with a palette dict next to them.
+The fish are generated rather than drawn by hand: `fish_art()` paints a tail
+fan, a teardrop body over its root, fins, a pattern, a face, and then a dark
+outline around the lot. A species is one row in `SPECIES` -- body, belly,
+accent and pattern -- so adding one is a one-line change. The scenery,
+pufferfish, jellyfish and seahorse are generated the same way, at whatever
+size the tank has room for, which is what keeps one pixel size at every
+resolution.
