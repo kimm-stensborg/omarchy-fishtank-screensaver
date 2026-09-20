@@ -137,16 +137,20 @@ shaft of moonlight left, and the jellyfish still glowing.*
   travelling fish is a closed form of its number, a fixed seed and the wall
   clock, so every screen computes the same answer alone. The fish that belong
   to a screen turn back at the glass, so one leaving it has genuinely gone
-  next door.
+  next door. The seabed is shared the same way: the first tank of a sitting
+  rolls a seed into the state file and the others adopt it.
 - **Life.** Generated fish species, each with a forked tail that flaps, a
   dorsal fin, a gill line and an eye. The smaller ones hold station on a shoal
   that drifts about the tank, breaking formation for food and settling back
   afterwards. Seahorses hang in the weeds, bottom feeders nose along the sand
   with their barbels out, a pufferfish drifts, jellyfish pulse, and a crab
   patrols the floor.
-- **A floor that is different every time.** Two to five pieces picked from a
-  sandcastle, a treasure chest, a boulder pile, branching coral, a sunken log
-  and an amphora, each generated at a size that suits the tank. Fish swim over
+- **One seabed, furnished differently every time.** The sand, the weeds and
+  the furniture are placed by where they are on the seabed rather than where
+  they are on your screen, so the floor runs straight through a monitor edge
+  the way the fish do -- no repeated castle, no seam in the sand. Every
+  sitting rolls a new floor: two to five pieces from a sandcastle, a chest, a
+  boulder pile, branching coral, a sunken log and an amphora. Fish swim over
   anything tall enough to be in the way, weeds keep out of the furniture, and
   bubbles rise from whichever pieces are hollow.
 - **A predator.** Every few minutes something bigger cruises through, and the

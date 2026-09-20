@@ -2119,6 +2119,20 @@ class Tank:
         self.vents = []
         self.predator = None
 
+        self.world = world_geometry() if getattr(opts, "ocean", True) else None
+        # Every screen builds the same seabed from this, so the floor carries
+        # across a monitor edge; it is rolled afresh for each sitting.
+        self.seabed_seed = int(getattr(opts, "seabed", 0) or WORLD_SEED)
+        # The seabed is one strip across every monitor. Without an ocean, the
+        # strip is simply this screen.
+        if self.world:
+            world_w, our_x, our_w, _ = self.world
+            to_local = self.w / float(max(1.0, our_w))
+            self.seabed_x = our_x * to_local
+            self.seabed_w = world_w * to_local
+        else:
+            self.seabed_x, self.seabed_w = 0.0, float(self.w)
+
         self.water = self._water_rows()
         self.sand = self._sand()
         self.decor = self._decor()
@@ -2129,7 +2143,6 @@ class Tank:
         self.schools = []
 
         # One ocean across every monitor, when there is more than one.
-        self.world = world_geometry() if getattr(opts, "ocean", True) else None
         self.travellers = []
         if self.world:
             for index in range(int(clamp(self.world[0] / 320.0, 5, 21))):
@@ -2293,16 +2306,40 @@ class Tank:
             rows.append(mix(WATER_TOP, WATER_BOTTOM, f ** 0.85))
         return rows
 
+    # -- one seabed, addressed by where it is in the world -------------------
+
+    def world_of(self, x):
+        """This screen's x, as a place on the seabed shared by every screen."""
+        return self.seabed_x + x
+
+    def grain(self, wx, y, salt=0):
+        """A fixed speck of noise for a spot on the seabed.
+
+        Drawing the sand from a running random number generator makes it a
+        property of the order the pixels were drawn in, which is different on
+        every screen. Hashing the place instead makes the same spot look the
+        same wherever it is drawn -- which is what lets the floor cross a
+        monitor edge.
+        """
+        h = (int(wx) * 73856093) ^ (int(y) * 19349663) ^ (salt * 83492791) ^ self.seabed_seed
+        h &= 0xFFFFFFFF
+        h ^= h >> 13
+        h = (h * 1274126177) & 0xFFFFFFFF
+        return ((h >> 8) & 0xFFFF) / 65535.0
+
+    def sand_height(self, wx):
+        """How high the sand stands at that place on the seabed."""
+        return int(round(math.sin(wx * 0.11) * 1.6 + math.sin(wx * 0.37) * 0.9))
+
     def _sand(self):
         """Dithered sea floor, returned as a list of (x, y, colour)."""
         pixels = []
-        rnd = random.Random(1337)
-        top = [self.floor + int(round(math.sin(x * 0.11) * 1.6 +
-                                      math.sin(x * 0.37) * 0.9))
+        top = [self.floor + self.sand_height(self.world_of(x))
                for x in range(self.w)]
         for x in range(self.w):
+            wx = self.world_of(x)
             for y in range(top[x], self.h):
-                r = rnd.random()
+                r = self.grain(wx, y)
                 if y == top[x]:
                     c = SAND_LIGHT if r < 0.4 else SAND
                 elif r < 0.12:
@@ -2312,15 +2349,19 @@ class Tank:
                 else:
                     c = SAND
                 pixels.append((x, y, pack(c)))
-        # pebbles
-        for _ in range(max(4, self.w // 14)):
-            px = rnd.randrange(2, max(3, self.w - 4))
-            py = top[px] + rnd.randrange(0, 3)
-            size = rnd.choice((1, 2, 2, 3))
+
+        # Pebbles, also placed by where they are rather than in what order.
+        for x in range(-4, self.w + 4):
+            wx = self.world_of(x)
+            if self.grain(wx, 0, salt=7) > 0.07:
+                continue
+            py = self.floor + self.sand_height(wx) + int(self.grain(wx, 1, salt=7) * 3)
+            size = 1 + int(self.grain(wx, 2, salt=7) * 3)
             for dy in range(size):
                 for dx in range(size + 1):
-                    c = ROCK if dy == 0 else ROCK_DARK
-                    pixels.append((px + dx, py + dy, pack(c)))
+                    if 0 <= x + dx < self.w:
+                        c = ROCK if dy == 0 else ROCK_DARK
+                        pixels.append((x + dx, py + dy, pack(c)))
         self.sand_top = top
         return pixels
 
@@ -2337,70 +2378,70 @@ class Tank:
     )
 
     def _decor(self):
-        """Furnish the floor with a handful of pieces, different every time.
+        """Furnish the floor, in world coordinates.
 
-        Anything tall enough to be in the way is remembered as a box, so fish
-        swim over it rather than through it, and the hollow pieces are
-        remembered as places a bubble can come out of.
+        Pieces are placed along the whole seabed from a fixed seed, and each
+        screen keeps the ones that fall in its window. So the furniture
+        carries across a monitor edge the same way the fish do, and no two
+        screens invent the same castle in different places.
         """
         bag = []
         for name, weight, _, _, _, _, _ in self.SCENERY:
             bag += [name] * weight
-        random.shuffle(bag)
 
-        wanted = int(clamp(self.w // 55, 2, 5))
-        picks, seen = [], set()
-        for name in bag:
-            if name in seen and name in ("castle", "chest"):
-                continue
-            seen.add(name)
-            picks.append(name)
-            if len(picks) >= wanted:
-                break
+        span = self.seabed_w
+        gap = max(30, int(self.w * 0.22))
+        rnd = random.Random(self.seabed_seed ^ 0x5EABED)
 
         items = []
         self.decor_boxes = []
         self.vents = []
-        taken = []
-        for name in picks:
+        placed = []
+        wx = rnd.uniform(0, gap)
+        while wx < span:
+            name = bag[rnd.randrange(len(bag))]
             spec = next(row for row in self.SCENERY if row[0] == name)
             _, _, height, ratio, palette, maker, hollow = spec
             piece_h = int(clamp(round(self.h * height), 4, 44))
             piece_w = max(5, int(round(piece_h * ratio)))
+            step = gap + rnd.uniform(0, gap)
+
+            left = self.seabed_x and (wx - self.seabed_x) or wx
+            left = wx - self.seabed_x                       # this screen's x
+            wx += step
             if piece_w > self.w * 0.45:
-                continue                       # no room for this one here
+                continue
+            if left + piece_w < -2 or left > self.w + 2:    # another screen's
+                continue
+
             sprite = Sprite.from_art(globals()[maker](piece_w, piece_h),
                                      globals()[palette])
-
-            for _ in range(24):
-                x = random.randrange(1, max(2, self.w - sprite.w - 1))
-                if all(x + sprite.w + 3 < a or x > b + 3 for a, b in taken):
-                    break
-            else:
-                continue
-            taken.append((x, x + sprite.w))
-            y = self.floor - sprite.h + 2
+            x = int(round(left))
+            y = self.floor + self.sand_height(self.world_of(x)) - sprite.h + 2
             items.append((sprite, x, y))
+            placed.append((x, x + sprite.w))
             if sprite.h > self.h * 0.07:
                 self.decor_boxes.append((x, y, x + sprite.w, y + sprite.h))
             if hollow:
                 self.vents.append(x + sprite.w // 2)
 
-        # Kept for the weeds, which give the biggest piece a wide berth.
-        tallest = max(self.decor_boxes, key=lambda b: b[3] - b[1],
-                      default=None)
+        tallest = max(self.decor_boxes, key=lambda b: b[3] - b[1], default=None)
         self.castle_rect = (tallest[0], tallest[2] - tallest[0]) if tallest else (0, 0)
         return items
 
     def _weed_positions(self):
+        """Where the weeds stand, again as places on the seabed rather than
+        on this screen, so a bed of them carries across an edge."""
         spots = []
-        x = random.randrange(0, 8)
-        while x < self.w:
-            clear = all(x < x0 - 2 or x > x1 + 1
-                        for x0, _, x1, _ in self.decor_boxes)
-            if clear:
+        rnd = random.Random(self.seabed_seed ^ 0x3EED)
+        wx = rnd.uniform(0, 8)
+        while wx < self.seabed_w:
+            x = int(round(wx - self.seabed_x))
+            wx += 5 + rnd.uniform(0, 11)
+            if not -2 <= x <= self.w + 2:
+                continue
+            if all(x < x0 - 2 or x > x1 + 1 for x0, _, x1, _ in self.decor_boxes):
                 spots.append(x)
-            x += random.randrange(5, 16)
         return spots
 
     # -- drawing helpers ----------------------------------------------------
@@ -2688,6 +2729,26 @@ def load_state():
         return saved if isinstance(saved, dict) else {}
     except (OSError, ValueError):
         return {}
+
+
+SEABED_FRESH = 25.0        # seconds within which screens count as one sitting
+
+
+def seabed_seed(saved, now=None):
+    """The seed every screen of this sitting builds its floor from.
+
+    The screensaver starts one tank per monitor within a second or so of
+    each other, and they have to agree. The first to look rolls a seed into
+    the state file; the others, arriving while it is fresh, adopt it. A
+    later sitting finds it stale and rolls another, so the floor is new
+    each time without being different on each screen.
+    """
+    now = now if now is not None else time.time()
+    seed = saved.get("seabed")
+    when = saved.get("seabed_at") or 0
+    if seed and now - when < SEABED_FRESH:
+        return int(seed), False
+    return random.randrange(1 << 30), True
 
 
 def state_mtime():
@@ -3011,6 +3072,11 @@ def main():
     if clock_hours not in (0, 12, 24):
         clock_hours = 0
 
+    seabed, rolled = seabed_seed(saved)
+    if rolled:
+        save_state(seabed=seabed, seabed_at=time.time())
+    opts.seabed = seabed
+
     night_choice = opts.night if night_asked else saved.get("night", "sun")
     if night_choice != "sun":
         try:
@@ -3157,6 +3223,11 @@ def main():
                         tank.logo = tank._logo()
                     # Food asked for from outside -- the bar button, or
                     # `fishtank --feed` from anywhere.
+                    want = int(shared.get("seabed") or 0)
+                    if want and want != opts.seabed:
+                        # Another screen got there first; build its floor.
+                        opts.seabed = want
+                        resized[0] = True
                     want = shared.get("clock", clock_hours)
                     if want in (0, 12, 24) and want != clock_hours:
                         clock_hours = want

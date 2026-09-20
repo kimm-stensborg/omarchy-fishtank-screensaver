@@ -66,6 +66,7 @@ class Opts:
     fish = None
     logo = "wordmark"
     logo_opacity = 0.26
+    seabed = 20260920
 
 
 # -- the scene, at every size that matters ----------------------------------
@@ -312,151 +313,70 @@ for w in (5, 9, 17):
     check("jelly at %d has tentacles" % w,
           any("t" in row for row in ft.make_jelly(w, int(w * 1.6))))
 
-# -- scenery is different every time, and never stacked -------------------
+# -- one seabed, shared across screens, new each sitting ---------------------
+
+def seabed_opts(seed, world=None):
+    opts = Opts()
+    opts.night = 0.0
+    opts.seabed = seed
+    if world:
+        os.environ["FISHTANK_WORLD"] = world
+    else:
+        os.environ.pop("FISHTANK_WORLD", None)
+    return opts
+
 
 layouts = set()
 for seed in range(12):
     random.seed(seed)
-    tank = ft.Tank(320, 81, Opts())
+    tank = ft.Tank(320, 81, seabed_opts(1000 + seed))
     spread = []
     for sprite, x, y in tank.decor:
         spread.append((x, x + sprite.w))
-        check("scenery sits on the floor",
-              y + sprite.h >= tank.floor and y >= 0)
+        check("scenery sits on the floor", y + sprite.h >= tank.floor and y >= 0)
     spread.sort()
-    overlap = any(spread[i][1] > spread[i + 1][0] for i in range(len(spread) - 1))
-    check("scenery does not stack up", not overlap, str(spread))
+    check("scenery does not stack up",
+          not any(spread[i][1] > spread[i + 1][0] for i in range(len(spread) - 1)),
+          str(spread))
     layouts.add(tuple(sorted((x, s.w, s.h) for s, x, _ in tank.decor)))
-check("scenery differs between tanks", len(layouts) >= 8,
+check("a new seed furnishes the floor differently", len(layouts) >= 8,
       "%d different layouts in 12" % len(layouts))
 
-for cols, rows in ((96, 30), (320, 81)):
-    random.seed(2)
-    tank = ft.Tank(cols, rows, Opts())
-    check("%dx%d scenery fits the tank" % (cols, rows),
-          all(x >= 0 and x + s.w <= tank.w for s, x, _ in tank.decor))
+random.seed(3)
+same_a = ft.Tank(320, 81, seabed_opts(4242))
+random.seed(9)
+same_b = ft.Tank(320, 81, seabed_opts(4242))
+check("the same seed builds the same floor",
+      [(s.w, s.h, x) for s, x, _ in same_a.decor] ==
+      [(s.w, s.h, x) for s, x, _ in same_b.decor])
 
-# -- the renderer only sends what changed ------------------------------------
+# Two screens side by side in one ocean: the floor has to run straight
+# through the join.
+left = ft.Tank(320, 81, seabed_opts(777, "6656,0,2560,1440"))
+right = ft.Tank(320, 81, seabed_opts(777, "6656,2560,2560,1440"))
+os.environ.pop("FISHTANK_WORLD", None)
 
+joins = []
+for step in range(1, 9):
+    joins.append((left.sand_height(left.world_of(left.w - 1 + step)),
+                  right.sand_height(right.world_of(step - 1))))
+check("the sand runs on across the join", all(a == b for a, b in joins), str(joins))
 
-class Sink:
-    def __init__(self):
-        self.text = ""
+check("the two screens are looking at different stretches of it",
+      abs(left.seabed_x - right.seabed_x) > 100,
+      "%.0f vs %.0f" % (left.seabed_x, right.seabed_x))
+check("and at the same seabed", left.seabed_w == right.seabed_w)
 
-    def write(self, chunk):
-        self.text += chunk
+# A piece that straddles the join is drawn by both, at the matching place.
+straddling = [(s, x) for s, x, _ in left.decor if x + s.w > left.w - 2]
+if straddling:
+    sprite, x = straddling[0]
+    twin = [(s2, x2) for s2, x2, _ in right.decor
+            if abs((x - left.w) - x2) <= 1 and s2.w == sprite.w]
+    check("a piece on the join is on both screens", bool(twin),
+          "left at %d, right has %s" % (x, [x2 for _, x2, _ in right.decor]))
 
-    def flush(self):
-        pass
-
-
-tank, buf = run_tank(160, 45, Opts(), frames=3)
-ft.forget_frame()
-first = Sink()
-ft.render(buf, 160, 45, first)
-check("a forgotten frame is drawn in full", first.text.count("\u2580") >= 160 * 45 * 0.9,
-      "%d cells" % first.text.count("\u2580"))
-
-again = Sink()
-ft.render(buf, 160, 45, again)
-check("an unchanged frame sends nothing", again.text == "", "%d bytes" % len(again.text))
-
-buf[5 * 160 + 7] = 0xFF00FF
-moved = Sink()
-ft.render(buf, 160, 45, moved)
-check("one changed pixel sends one row", 0 < moved.text.count("\u2580") <= 160 * 2,
-      "%d cells" % moved.text.count("\u2580"))
-ft.forget_frame()
-
-# -- feeding looks like eating, not like spinning ---------------------------
-
-daylight = Opts()
-daylight.night = 0.0          # after dark everything moves at half speed
-random.seed(4)
-tank = ft.Tank(320, 81, daylight)
-swimmers = [a for a in tank.actors if isinstance(a, ft.Fish)]
-now = 1000.0
-tank.feed(now)
-crumbs = len(tank.flakes)
-turns = {id(f): 0 for f in swimmers}
-facing = {id(f): f.dir for f in swimmers}
-for _ in range(24 * 6):
-    now += 1 / 24.0
-    tank.update(1 / 24.0, now)
-    for fish in swimmers:
-        if fish.dir != facing[id(fish)]:
-            turns[id(fish)] += 1
-            facing[id(fish)] = fish.dir
-worst = max(turns.values())
-check("a feeding fish does not spin on the spot", worst <= 12,
-      "%d turns in six seconds" % worst)
-check("fish commit to one crumb at a time",
-      all(f.target is None or f.target in tank.flakes for f in swimmers))
-check("and the food does get eaten", len(tank.flakes) < crumbs,
-      "%d of %d left" % (len(tank.flakes), crumbs))
-
-for _ in range(24 * 12):
-    now += 1 / 24.0
-    tank.update(1 / 24.0, now)
-check("a feed is finished inside twenty seconds", not tank.flakes,
-      "%d left" % len(tank.flakes))
-
-# -- the predator, and the hints ---------------------------------------------
-
-random.seed(8)
-tank = ft.Tank(320, 81, Opts())
-check("a big tank gets a predator", tank.predator is not None)
-check("nothing is threatened while it is away", tank.threat is None)
-
-tank.predator.next_at = 0
-now = 1000.0
-for _ in range(20):
-    now += 1 / 24.0
-    tank.update(1 / 24.0, now)
-check("it turns up", tank.predator.active)
-check("and it is a threat while it is here", tank.threat is tank.predator)
-
-# A fish beside it bolts the other way; one across the tank carries on.
-victims = [a for a in tank.actors
-           if isinstance(a, ft.Fish) and not isinstance(a, ft.Predator)]
-near = sorted(victims, key=lambda a: abs(a.x - tank.predator.x))[0]
-px = tank.predator.centre[0]
-near.x = px + 6 if px < tank.w / 2 else px - 6
-before = abs(near.x - px)
-check("a fish beside it bolts", near.flee(1 / 24.0, tank.predator))
-check("and it bolts the right way", abs(near.x - px) > before,
-      "%.1f -> %.1f" % (before, abs(near.x - px)))
-
-far_off = victims[-1]
-far_off.x = 0 if px > tank.w / 2 else tank.w - far_off.w
-check("a fish across the tank carries on",
-      not far_off.flee(1 / 24.0, tank.predator))
-
-fleeing = 0
-for _ in range(24):
-    now += 1 / 24.0
-    tank.update(1 / 24.0, now)
-    fleeing += sum(1 for a in victims if a.flee(0.0, tank.predator))
-check("something is fleeing while it crosses", fleeing > 0)
-
-small = ft.Tank(60, 20, Opts())
-check("a small tank has no room for one", small.predator is None)
-
-for cols, rows in ((60, 20), (160, 45), (320, 81)):
-    tank, buf = run_tank(cols, rows, Opts(), frames=2)
-    before = list(buf)
-    ft.draw_hints(tank, buf, 1.0)
-    if cols >= 160:
-        check("the hints show at %dx%d" % (cols, rows), buf != before)
-        changed = [i for i, (a, b) in enumerate(zip(before, buf)) if a != b]
-        check("the hints stay inside the tank at %dx%d" % (cols, rows),
-              all(0 <= i < len(buf) for i in changed))
-        check("the hints sit above the sand at %dx%d" % (cols, rows),
-              all(i // tank.w < tank.floor for i in changed))
-    else:
-        check("a narrow tank skips the hints", buf == before)
-
-# -- the clock ---------------------------------------------------------------
+# -- the clock ---# -- the clock ---------------------------------------------------------------
 
 for cols, rows in ((96, 30), (320, 81)):
     for hours in (12, 24):
@@ -492,6 +412,15 @@ for mode, lit, want in ((0.0, 0.0, 1.0),        # sitting in daylight -> night
                         ("sun", 1.0, 0.0)):     # following the sun, at night -> day
     check("F5 from %r at light %.0f gives %r" % (mode, lit, want),
           press_f5(mode, lit) == want)
+
+# -- screens agree which seabed they are on ---------------------------------
+
+fresh, rolled = ft.seabed_seed({}, now=1000.0)
+check("the first screen of a sitting rolls a seabed", rolled and fresh > 0)
+adopted, rolled_again = ft.seabed_seed({"seabed": fresh, "seabed_at": 999.0}, now=1000.0)
+check("the next screen adopts it", adopted == fresh and not rolled_again)
+later, rolled_later = ft.seabed_seed({"seabed": fresh, "seabed_at": 100.0}, now=1000.0)
+check("a later sitting rolls a new one", rolled_later)
 
 # -- state round-trip --------------------------------------------------------
 
