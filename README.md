@@ -23,8 +23,11 @@ sand.
 Everything is sized from the tank rather than in fixed pixels: fish are a
 fraction of the canvas height, with the ones far back small and dim and the
 ones near the glass large, and the logo shrinks to fit a narrow tank. The
-hand-drawn sprites -- castle, crab, chest -- double once the tank is tall
-enough for it, so a castle stays the size of a castle next to the fish.
+castle, chest, pufferfish and jellyfish are generated at whatever size the
+tank has room for, rather than drawn once and doubled -- doubling only some
+of the art put chunky pixels next to smooth ones, which reads as two
+different pictures on the same screen. One pixel size everywhere, at any
+resolution.
 
 Swimming in the tank: generated fish species (each with a forked tail
 that flaps, a dorsal fin, a gill line and a proper eye), a pufferfish, drifting
@@ -73,6 +76,12 @@ the tank opens with next time** -- it is written to
 `$XDG_STATE_HOME/fishtank/state.json` and read at startup, so you can leave
 the screensaver on the theme you liked. A flag on the command line still wins
 over the saved choice.
+
+A screensaver runs one tank per monitor, and a keypress only reaches the
+focused one, so each tank also watches that file and follows it. Press F1 on
+one screen and the others change with it, and the choice that gets remembered
+is the one you last made rather than whichever screen happened to be
+focused.
 
 Switching theme repaints the tank you were already watching rather than
 generating a new one: the layout seed is held across the rebuild, so the same

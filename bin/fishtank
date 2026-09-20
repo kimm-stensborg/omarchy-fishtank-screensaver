@@ -748,6 +748,151 @@ def apply_theme(colors):
     return True
 
 
+def make_castle(w, h):
+    """A sandcastle at whatever size the tank has room for.
+
+    Hand-drawn art can only be doubled, which puts chunky 2x pixels next to
+    the smoothly scaled fish; generating it keeps one pixel size everywhere.
+    """
+    w = max(9, w | 1)
+    h = max(7, h)
+    grid = [["." for _ in range(w)] for _ in range(h)]
+    tower = max(2, w // 5)
+    keep_top = max(1, int(h * 0.34))
+    mid0 = (w - tower) // 2
+    mid_top = 0
+
+    def block(x0, x1, y0, y1, key="s"):
+        for y in range(max(0, y0), min(h, y1)):
+            for x in range(max(0, x0), min(w, x1)):
+                grid[y][x] = key
+
+    block(0, w, keep_top, h)                     # the keep
+    block(0, tower, keep_top - max(1, h // 6), h)        # left tower
+    block(w - tower, w, keep_top - max(1, h // 6), h)    # right tower
+    block(mid0, mid0 + tower, mid_top, h)                # centre tower
+
+    # Battlements: notch the top row of each tower and of the keep.
+    def crenellate(x0, x1, y):
+        step = max(1, (x1 - x0) // 3)
+        for x in range(x0, x1):
+            if ((x - x0) // step) % 2 == 1:
+                for yy in range(max(0, y), min(h, y + max(1, h // 12))):
+                    grid[yy][x] = "."
+
+    crenellate(0, tower, keep_top - max(1, h // 6))
+    crenellate(w - tower, w, keep_top - max(1, h // 6))
+    crenellate(mid0, mid0 + tower, mid_top)
+    crenellate(tower, mid0, keep_top)
+    crenellate(mid0 + tower, w - tower, keep_top)
+
+    # Door and windows.
+    door_w = max(1, w // 7)
+    door_h = max(2, int(h * 0.42))
+    block((w - door_w) // 2, (w - door_w) // 2 + door_w, h - door_h, h, "d")
+    eye = max(1, tower // 3)
+    for x0 in (tower // 2 - eye // 2, w - tower // 2 - eye // 2):
+        block(x0, x0 + eye, keep_top + max(1, h // 8), keep_top + max(2, h // 8) + eye, "d")
+
+    return ["".join(row) for row in grid]
+
+
+def make_chest(w, h):
+    """A treasure chest: lid, band, and a glint of gold."""
+    w = max(6, w)
+    h = max(4, h)
+    lid = max(1, h // 3)
+    rows = []
+    for y in range(h):
+        row = []
+        for x in range(w):
+            if y < lid:
+                edge = x == 0 or x == w - 1
+                row.append("." if (y == 0 and edge) else ("w" if y == 0 else "g"))
+            elif y == lid:
+                row.append("w")
+            else:
+                middle = abs(x - (w - 1) / 2.0) < max(0.6, w / 10.0)
+                row.append("K" if middle and y > lid + 1 else "g")
+        rows.append("".join(row))
+    return rows
+
+
+def make_puffer(size):
+    """A round fish with spines standing off its rim."""
+    size = max(5, size | 1)
+    pad = 1
+    w = size + pad * 2
+    r = (size - 1) / 2.0
+    grid = [["." for _ in range(w)] for _ in range(size)]
+
+    for y in range(size):
+        for x in range(size):
+            dx, dy = (x - r) / r, (y - r) / r
+            d = dx * dx + dy * dy
+            if d <= 1.0:
+                grid[y][x + pad] = "p" if d < 0.62 else "k"
+
+    # Spines: one pixel just outside the rim, evenly around it.
+    spikes = max(6, size)
+    for i in range(spikes):
+        a = i * math.tau / spikes
+        sx = int(round(r + math.cos(a) * (r + 1.2))) + pad
+        sy = int(round(r + math.sin(a) * (r + 1.2)))
+        if 0 <= sy < size and 0 <= sx < w and grid[sy][sx] == ".":
+            grid[sy][sx] = "k"
+
+    # A couple of darker dots for texture.
+    for y in range(2, size - 2, max(2, size // 3)):
+        for x in range(2, size - 2, max(2, size // 3)):
+            if grid[y][x + pad] == "p":
+                grid[y][x + pad] = "s"
+
+    ey, ex = int(round(r - r * 0.35)), int(round(size - r * 0.55)) + pad
+    if 0 <= ey < size and ex + 1 < w:
+        grid[ey][ex] = "W"
+        grid[ey][ex + 1] = "K"
+    my = int(round(r + r * 0.45))
+    if 0 <= my < size and grid[my][size + pad - 1] != ".":
+        grid[my][size + pad - 1] = "K"
+    return ["".join(row) for row in grid]
+
+
+def make_jelly(w, h):
+    """A domed bell with tentacles trailing under it."""
+    w = max(5, w | 1)
+    h = max(6, h)
+    bell_h = max(3, int(round(h * 0.45)))
+    grid = [["." for _ in range(w)] for _ in range(h)]
+    cx = (w - 1) / 2.0
+
+    # Dome: narrow at the top, widest at the rim.
+    for y in range(bell_h):
+        f = (y + 1) / float(bell_h)
+        half = (w / 2.0) * math.sin(f * math.pi / 2) ** 0.7
+        lo, hi = int(round(cx - half)), int(round(cx + half))
+        for x in range(lo, hi + 1):
+            if 0 <= x < w:
+                inner = (x > lo and x < hi and 0 < y < bell_h - 1)
+                grid[y][x] = "J" if inner else "j"
+
+    # Fringe along the rim.
+    for x in range(w):
+        if grid[bell_h - 1][x] != "." and x % 2 == 0 and bell_h < h:
+            grid[bell_h][x] = "j"
+
+    # Tentacles: continuous strands that wander a little as they fall.
+    strands = max(2, w // 3)
+    for i in range(strands):
+        x = (i + 0.5) * (w - 1) / float(strands)
+        for y in range(bell_h, h):
+            f = (y - bell_h) / float(max(1, h - bell_h))
+            xx = int(round(x + math.sin(f * 3.0 + i) * (w * 0.10)))
+            if 0 <= xx < w and grid[y][xx] == ".":
+                grid[y][xx] = "t"
+    return ["".join(row) for row in grid]
+
+
 # ------------------------------------------------------------------ actors ---
 
 class Fish:
@@ -867,8 +1012,9 @@ class Puffer(Fish):
     def __init__(self, tank):
         self.tank = tank
         self.depth = random.uniform(0.3, 0.7)
-        base = Sprite.from_art(PUFFER_ART, PUFFER_PALETTE)
-        base = base.tinted(WATER_TOP, (1.0 - self.depth) * 0.3).scaled(tank.unit)
+        size = int(clamp(round(tank.h * 0.085), 5, 21))
+        base = Sprite.from_art(make_puffer(size), PUFFER_PALETTE)
+        base = base.tinted(WATER_TOP, (1.0 - self.depth) * 0.3)
         self.right = [base, base.scaled(1)]
         self.left = [base.mirrored(), base.mirrored()]
         self.w, self.h = base.w, base.h
@@ -892,7 +1038,8 @@ class Puffer(Fish):
 class Jelly:
     def __init__(self, tank):
         self.tank = tank
-        base = Sprite.from_art(JELLY_ART, JELLY_PALETTE).scaled(tank.unit)
+        bell = int(clamp(round(tank.h * 0.075), 5, 19))
+        base = Sprite.from_art(make_jelly(bell, int(bell * 1.6)), JELLY_PALETTE)
         self.frames = [base, base]
         self.w, self.h = base.w, base.h
         self.x = random.uniform(0, max(1, tank.w - self.w))
@@ -919,8 +1066,9 @@ class Jelly:
 class Crab:
     def __init__(self, tank):
         self.tank = tank
-        self.a = Sprite.from_art(CRAB_ART, CRAB_PALETTE).scaled(tank.unit)
-        self.b = Sprite.from_art(CRAB_ART_B, CRAB_PALETTE).scaled(tank.unit)
+        crab_scale = max(1, int(round(tank.h / 120.0)))
+        self.a = Sprite.from_art(CRAB_ART, CRAB_PALETTE).scaled(crab_scale)
+        self.b = Sprite.from_art(CRAB_ART_B, CRAB_PALETTE).scaled(crab_scale)
         self.w, self.h = self.a.w, self.a.h
         self.x = random.uniform(0, max(1, tank.w - self.w))
         self.y = tank.floor - self.h + 1
@@ -1067,10 +1215,10 @@ class Tank:
         self.opts = opts
         self.t = 0.0
         self.floor = int(self.h * 0.86)
-        # The generated fish scale smoothly with the tank; the hand-drawn
-        # sprites can only double, so they do that once there is room, and
-        # the castle stays the size of a castle next to the fish.
-        self.unit = 2 if self.h >= 130 else 1
+        # One pixel size for the whole scene. Doubling only some of the art
+        # put chunky sprites next to smooth ones, which read as two different
+        # pictures on the same screen.
+        self.unit = 1
 
         self.water = self._water_rows()
         self.sand = self._sand()
@@ -1221,13 +1369,17 @@ class Tank:
 
     def _decor(self):
         items = []
-        castle = Sprite.from_art(CASTLE_ART, CASTLE_PALETTE).scaled(self.unit)
+        castle_h = int(clamp(round(self.h * 0.22), 7, 40))
+        castle = Sprite.from_art(make_castle(int(castle_h * 1.55), castle_h),
+                                 CASTLE_PALETTE)
         cx = int(self.w * random.uniform(0.12, 0.7))
         cx = clamp(cx, 1, max(1, self.w - castle.w - 1))
         items.append((castle, cx, self.floor - castle.h + 2))
         self.castle_rect = (cx, castle.w)
 
-        chest = Sprite.from_art(CHEST_ART, CHEST_PALETTE).scaled(self.unit)
+        chest_h = int(clamp(round(self.h * 0.075), 4, 14))
+        chest = Sprite.from_art(make_chest(int(chest_h * 1.7), chest_h),
+                                CHEST_PALETTE)
         for _ in range(12):
             ox = random.randrange(0, max(1, self.w - chest.w))
             if abs(ox - cx) > castle.w + 2:
@@ -1396,6 +1548,13 @@ def load_state():
         return saved if isinstance(saved, dict) else {}
     except (OSError, ValueError):
         return {}
+
+
+def state_mtime():
+    try:
+        return os.stat(STATE_FILE).st_mtime_ns
+    except OSError:
+        return 0
 
 
 def save_state(**values):
@@ -1574,6 +1733,7 @@ def main():
     # function keys; otherwise it follows the desktop.
     saved = load_state()
     asked = opts.theme is not None
+    logo_asked = opts.logo is not None
     choice = opts.theme or saved.get("theme") or "current"
     opts.logo = opts.logo or saved.get("logo") or "wordmark"
 
@@ -1601,6 +1761,11 @@ def main():
 
     themes = installed_themes()
     logos = ("wordmark", "lockup", "mark", "none")
+    # A screensaver runs one of these per monitor, and a key only reaches the
+    # focused one. Following the state file keeps the other screens in step,
+    # and means the choice that gets remembered is the one you last made.
+    follow_state = not asked and not logo_asked
+    last_state = state_mtime()
 
     out = sys.stdout
     isatty = out.isatty() and sys.stdin.isatty()
@@ -1627,6 +1792,7 @@ def main():
         drawn = 0
         last = time.monotonic()
         next_focus_check = last + 1.0
+        next_state_check = last + 1.0
         frame_budget = 1.0 / max(1.0, opts.fps)
         while True:
             now = time.monotonic()
@@ -1652,6 +1818,24 @@ def main():
             drawn += 1
             if opts.frames is not None and drawn >= opts.frames:
                 break
+
+            if follow_state and now >= next_state_check:
+                next_state_check = now + 1.0
+                stamp = state_mtime()
+                if stamp != last_state:
+                    last_state = stamp
+                    shared = load_state()
+                    want = shared.get("theme") or choice
+                    if want != choice:
+                        choice = want
+                        if use_theme(choice) is None:
+                            restore_palette()
+                            choice = "none"
+                        resized[0] = True
+                    want = shared.get("logo") or opts.logo
+                    if want != opts.logo:
+                        opts.logo = want
+                        tank.logo = tank._logo()
 
             if opts.exit_on_unfocus and now >= next_focus_check:
                 next_focus_check = now + 1.0
@@ -1681,6 +1865,7 @@ def main():
                         restore_palette()
                         choice, shown = "none", "built-in"
                     save_state(theme=choice)
+                    last_state = state_mtime()
                     resized[0] = True                  # rebuild with the new palette
                     label = shown
                 elif key == 3:                         # F3: cycle the logo
@@ -1688,6 +1873,7 @@ def main():
                                       % len(logos)] if opts.logo in logos \
                         else logos[0]
                     save_state(logo=opts.logo)
+                    last_state = state_mtime()
                     tank.logo = tank._logo()
                     label = "logo: %s" % opts.logo
                 else:                                  # F4: feed the fish
