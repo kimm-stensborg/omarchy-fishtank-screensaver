@@ -36,9 +36,9 @@ across the back wall, and a few fronds close to the glass pass in front of
 everything, darker and bluer the way a near foreground goes.
 
 Swimming in the tank: generated fish species (each with a forked tail that
-flaps, a dorsal fin, a gill line and a proper eye), an eel putting a wave
-through itself along the bottom, seahorses hanging in the weeds, bottom
-feeders nosing along the sand with their barbels out, a pufferfish, drifting
+flaps, a dorsal fin, a gill line and a proper eye), seahorses hanging in the
+weeds, bottom feeders nosing along the sand with their barbels out, a
+pufferfish, drifting
 jellyfish, a crab that patrols the sand, bubbles from fish mouths and sand
 vents, swaying seaweed, a sandcastle, a treasure chest, god rays from the
 surface, drifting plankton and a rippling waterline.

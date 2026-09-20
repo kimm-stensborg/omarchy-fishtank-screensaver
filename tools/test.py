@@ -106,7 +106,7 @@ for cols, rows in ((96, 30), (320, 81)):
 for cols, rows in ((160, 45), (320, 81)):
     tank, _ = run_tank(cols, rows, Opts(), frames=40)
     kinds = {type(a).__name__ for a in tank.actors}
-    for wanted in ("Fish", "Eel", "Seahorse", "BottomFeeder", "Crab", "Jelly"):
+    for wanted in ("Fish", "Seahorse", "BottomFeeder", "Crab", "Jelly"):
         check("%dx%d has a %s" % (cols, rows, wanted), wanted in kinds, str(sorted(kinds)))
     check("%dx%d has shoals" % (cols, rows), len(tank.schools) > 0)
     shoaling = [a for a in tank.actors if getattr(a, "school", None) is not None]

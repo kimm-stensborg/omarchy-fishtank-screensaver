@@ -1355,56 +1355,6 @@ class School:
             self.x = -4
 
 
-class Eel:
-    """A long body that swims by putting a wave through itself."""
-
-    def __init__(self, tank):
-        self.tank = tank
-        species = random.choice(SPECIES)
-        body = species[1]
-        self.body = pack(mix(body, INK, 0.30))
-        self.belly = pack(mix(body, WHITE, 0.15))
-        self.eye = pack(WHITE)
-        self.length = int(clamp(tank.w * 0.17, 12, 64))
-        self.radius = max(1.5, tank.h * 0.030)
-        self.dir = random.choice((-1, 1))
-        self.speed = random.uniform(3.0, 6.5)
-        self.x = random.uniform(0, tank.w)
-        self.y = random.uniform(tank.floor * 0.45, tank.floor - self.radius * 3)
-        self.phase = random.uniform(0, math.tau)
-        self.depth = 0.5
-
-    def update(self, dt, now):
-        self.x += self.dir * self.speed * dt
-        self.phase += dt * 3.2
-        self.y += math.sin(self.phase * 0.21) * 1.2 * dt
-        self.y = clamp(self.y, self.tank.floor * 0.35,
-                       self.tank.floor - self.radius * 2 - 1)
-        if self.x < -self.length - 4:
-            self.x = self.tank.w + self.length
-        elif self.x > self.tank.w + self.length + 4:
-            self.x = -self.length
-
-    def draw(self, buf):
-        # A long, low wave down the body: a tight one reads as a zigzag wire
-        # rather than an animal.
-        amp = self.radius * 1.9
-        for i in range(self.length):
-            t = i / float(self.length)
-            px = self.x - self.dir * i
-            py = self.y + math.sin(self.phase - i * 0.24) * amp * (0.25 + 0.75 * t)
-            r = max(0.8, self.radius * (1.0 - 0.62 * t))
-            for dy in range(int(-r), int(r) + 1):
-                for dx in range(int(-r), int(r) + 1):
-                    if dx * dx + dy * dy > r * r:
-                        continue
-                    colour = self.belly if dy > 0 and t < 0.8 else self.body
-                    self.tank.px(buf, int(px + dx), int(py + dy), colour)
-        # Eye, on the head.
-        self.tank.px(buf, int(self.x + self.dir * 0.5),
-                     int(self.y - max(1, self.radius * 0.5)), self.eye)
-
-
 class Seahorse:
     """Hangs in the weeds, bobbing, going almost nowhere."""
 
@@ -1766,10 +1716,10 @@ class Tank:
         self.world = world_geometry() if getattr(opts, "ocean", True) else None
         self.travellers = []
         if self.world:
-            for index in range(int(clamp(self.world[0] / 240.0, 6, 28))):
+            for index in range(int(clamp(self.world[0] / 320.0, 5, 21))):
                 self.travellers.append(Traveller(self, index, self.world))
         count = opts.fish if opts.fish is not None else \
-            clamp(int(self.w * self.h / 900), 6, 24)
+            clamp(int(self.w * self.h / 1200), 5, 18)
         if self.travellers and opts.fish is None:
             # The ocean brings its own fish through; leave room for them.
             share = self.world[2] / float(self.world[0])
@@ -1802,7 +1752,6 @@ class Tank:
             for _ in range(max(1, count // 6)):
                 self.actors.append(Jelly(self))
         if self.w >= 80:
-            self.actors.append(Eel(self))
             for _ in range(1 + (self.w >= 200)):
                 self.actors.append(Seahorse(self))
             for _ in range(1 + (self.w >= 180)):
@@ -2041,13 +1990,6 @@ class Tank:
                     setattr(actor, attr, [tint_sprite(f, amount) for f in base])
                 else:
                     setattr(actor, attr, tint_sprite(base, amount))
-            if isinstance(actor, Eel):
-                if not hasattr(actor, "_day_colours"):
-                    actor._day_colours = (actor.body, actor.belly)
-                body, belly = actor._day_colours
-                actor.body = pack(mix(unpack(body), dark, level * 0.55))
-                actor.belly = pack(mix(unpack(belly), dark, level * 0.55))
-
         if self._day_sand is None:
             self._day_sand = self.sand
         self.sand = [(x, y, pack(mix(unpack(c), dark, level * 0.62)))
