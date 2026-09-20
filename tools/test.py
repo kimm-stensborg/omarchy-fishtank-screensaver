@@ -293,6 +293,93 @@ for cols, rows in ((96, 30), (320, 81)):
     check("%dx%d scenery fits the tank" % (cols, rows),
           all(x >= 0 and x + s.w <= tank.w for s, x, _ in tank.decor))
 
+# -- the renderer only sends what changed ------------------------------------
+
+
+class Sink:
+    def __init__(self):
+        self.text = ""
+
+    def write(self, chunk):
+        self.text += chunk
+
+    def flush(self):
+        pass
+
+
+tank, buf = run_tank(160, 45, Opts(), frames=3)
+ft.forget_frame()
+first = Sink()
+ft.render(buf, 160, 45, first)
+check("a forgotten frame is drawn in full", first.text.count("\u2580") >= 160 * 45 * 0.9,
+      "%d cells" % first.text.count("\u2580"))
+
+again = Sink()
+ft.render(buf, 160, 45, again)
+check("an unchanged frame sends nothing", again.text == "", "%d bytes" % len(again.text))
+
+buf[5 * 160 + 7] = 0xFF00FF
+moved = Sink()
+ft.render(buf, 160, 45, moved)
+check("one changed pixel sends one row", 0 < moved.text.count("\u2580") <= 160 * 2,
+      "%d cells" % moved.text.count("\u2580"))
+ft.forget_frame()
+
+# -- the predator, and the hints ---------------------------------------------
+
+random.seed(8)
+tank = ft.Tank(320, 81, Opts())
+check("a big tank gets a predator", tank.predator is not None)
+check("nothing is threatened while it is away", tank.threat is None)
+
+tank.predator.next_at = 0
+now = 1000.0
+for _ in range(20):
+    now += 1 / 24.0
+    tank.update(1 / 24.0, now)
+check("it turns up", tank.predator.active)
+check("and it is a threat while it is here", tank.threat is tank.predator)
+
+# A fish beside it bolts the other way; one across the tank carries on.
+victims = [a for a in tank.actors
+           if isinstance(a, ft.Fish) and not isinstance(a, ft.Predator)]
+near = sorted(victims, key=lambda a: abs(a.x - tank.predator.x))[0]
+px = tank.predator.centre[0]
+near.x = px + 6 if px < tank.w / 2 else px - 6
+before = abs(near.x - px)
+check("a fish beside it bolts", near.flee(1 / 24.0, tank.predator))
+check("and it bolts the right way", abs(near.x - px) > before,
+      "%.1f -> %.1f" % (before, abs(near.x - px)))
+
+far_off = victims[-1]
+far_off.x = 0 if px > tank.w / 2 else tank.w - far_off.w
+check("a fish across the tank carries on",
+      not far_off.flee(1 / 24.0, tank.predator))
+
+fleeing = 0
+for _ in range(24):
+    now += 1 / 24.0
+    tank.update(1 / 24.0, now)
+    fleeing += sum(1 for a in victims if a.flee(0.0, tank.predator))
+check("something is fleeing while it crosses", fleeing > 0)
+
+small = ft.Tank(60, 20, Opts())
+check("a small tank has no room for one", small.predator is None)
+
+for cols, rows in ((60, 20), (160, 45), (320, 81)):
+    tank, buf = run_tank(cols, rows, Opts(), frames=2)
+    before = list(buf)
+    ft.draw_hints(tank, buf, 1.0)
+    if cols >= 160:
+        check("the hints show at %dx%d" % (cols, rows), buf != before)
+        changed = [i for i, (a, b) in enumerate(zip(before, buf)) if a != b]
+        check("the hints stay inside the tank at %dx%d" % (cols, rows),
+              all(0 <= i < len(buf) for i in changed))
+        check("the hints sit above the sand at %dx%d" % (cols, rows),
+              all(i // tank.w < tank.floor for i in changed))
+    else:
+        check("a narrow tank skips the hints", buf == before)
+
 # -- the clock ---------------------------------------------------------------
 
 for cols, rows in ((96, 30), (320, 81)):

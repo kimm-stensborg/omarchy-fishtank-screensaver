@@ -78,6 +78,9 @@ by hand.
   there that makes its own light.
 - **The clock** sits in the top-right corner, in the tank's own pixels, dimmed
   with the light so it does not glare after dark.
+- **The keys announce themselves** the first few times the tank runs -- a line
+  low in the water that fades after a few seconds, and stops appearing for
+  good once you have pressed one of them.
 
 ## In the tank
 
@@ -107,6 +110,10 @@ by hand.
   and an amphora, each generated at a size that suits the tank. Fish swim over
   anything tall enough to be in the way, weeds keep out of the furniture, and
   bubbles rise from whichever pieces are hollow.
+- **A predator.** Every few minutes something bigger cruises through, and the
+  water in front of it empties: fish within reach bolt the other way and
+  drift back once it has gone. It belongs to the screen it is on rather than
+  to the ocean, so it comes and goes.
 - **Depth.** Shapes too far away to have colour drift along the back wall, and
   a few fronds close to the glass pass in front of everything.
 - **The Omarchy logo**, etched into the back wall from `logo.txt`, catching a
@@ -139,8 +146,11 @@ printf -- '--font-size 10\n--logo lockup\n' > ~/.config/fishtank.conf
 | `--fps` | Frame rate, default 24. |
 | `--seed` | Fixed layout, handy for screenshots. |
 
-A full-screen tank costs 2.5 ms per frame at 160x90 and about 7 ms at
-320x160, so one screen idles at 6-18% of a core depending on `--font-size`.
+A full-screen tank costs 1.6 ms per frame at 160x90 and 4.2 ms at 320x162, so
+one screen idles at 4-10% of a core depending on `--font-size`. The scenery
+and the sand are flattened into plain writes once rather than drawn each
+frame, the logo is blended a row at a time rather than a pixel at a time, and
+the renderer sends only the rows that changed.
 
 ## Uninstall
 
