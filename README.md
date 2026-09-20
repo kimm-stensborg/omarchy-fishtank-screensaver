@@ -82,8 +82,9 @@ in a terminal by hand.
 | F2 | Back to the theme the desktop is wearing |
 | F3 | Cycle the back wall: wordmark, lockup, mark, nothing |
 | F4 | Feed the fish |
+| F5 | Day, night, or the cycle between them |
 
-F1, F2 and F3 name what they just picked in the top-left corner, in the tank's
+F1, F2, F3 and F5 name what they just picked in the top-left corner, in the tank's
 own pixels, and the text fades out after two seconds. **What you pick is what
 the tank opens with next time** -- it is written to
 `$XDG_STATE_HOME/fishtank/state.json` and read at startup, so you can leave
@@ -117,12 +118,21 @@ are windows onto the same ocean. A fish that leaves the right edge of one
 screen arrives at the left edge of the next, at the moment it should, the
 right size and at the right depth.
 
+While a tank is part of an ocean, its own fish turn back at the glass, so a
+fish leaving the screen means it has genuinely gone to the next monitor
+rather than wrapping around to the other side of the same one. At any moment
+a few are mid-crossing.
+
 They manage it without talking to each other. Each tank works out which
 monitor it is on (its window's process, matched against Hyprland's client
 list) and where that monitor sits in the layout. The fish that travel are
 then a closed form: position is a function of the fish's number, a fixed
 seed and the wall clock, so every screen computes the same answer
 independently. Nothing is synchronised because nothing needs to be.
+
+Monitors of different sizes are still each their own body of water, so a fish
+crossing between screens of different heights shifts a little vertically as
+it goes; between matching monitors it is seamless.
 
 `--no-ocean` keeps each screen's fish to itself. A single monitor is its own
 ocean and the code stays out of the way.

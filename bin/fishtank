@@ -1078,6 +1078,9 @@ class Traveller:
         self.x = 0.0
         self.y = 0.0
         self.frame = 0
+        # Put it where it belongs before the first frame, or every tank opens
+        # with the whole ocean stacked at its left edge.
+        self.update(0.0, time.time())
 
     def update(self, dt, now):
         clock = time.time()
@@ -2515,6 +2518,7 @@ def main():
         last = time.monotonic()
         next_focus_check = last + 1.0
         next_state_check = last + 1.0
+        next_debug = 0.0
         frame_budget = 1.0 / max(1.0, opts.fps)
         while True:
             now = time.monotonic()
@@ -2529,12 +2533,20 @@ def main():
                 buf = [0] * (cols * rows * 2)
                 out.write("\033[2J")
 
-            if opts.debug_file and drawn == 0:
+            if opts.debug_file and now >= next_debug:
+                next_debug = now + 3.0
                 try:
+                    here = [p for p in tank.travellers
+                            if -p.w < p.x < tank.w]
+                    edging = [p for p in here
+                              if p.x < 0 or p.x + p.w > tank.w]
                     with open(opts.debug_file, "a", encoding="utf-8") as fh:
-                        fh.write("%s %dx%d world=%s travellers=%d\n" %
+                        fh.write("%s %dx%d at=%d world=%s travellers=%d "
+                                 "on-screen=%d crossing-an-edge=%d\n" %
                                  (time.strftime("%H:%M:%S"), cols, rows,
-                                  tank.world, len(tank.travellers)))
+                                  tank.world[1] if tank.world else -1,
+                                  bool(tank.world), len(tank.travellers),
+                                  len(here), len(edging)))
                 except OSError:
                     pass
 
