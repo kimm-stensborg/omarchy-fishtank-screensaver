@@ -20,6 +20,14 @@ number -- a fractional resize smears those strokes into grey mush. A tall tank
 gets it at full size; a short one halves it so the lockup still fits above the
 sand.
 
+Sprites are sized from the tank, not in fixed pixels. The screensaver runs
+foot at font size 18, which on a scaled laptop panel is about a hundred
+columns -- half the grid of an everyday terminal -- so a fish measured in
+pixels swells to a third of the screen there. Everything scales instead: fish
+are a fraction of the canvas height, and the logo shrinks to fit a narrow
+tank. The composition comes out the same whether it is a 106x60 canvas or a
+240x120 one.
+
 Swimming in the tank: generated fish species (each with a forked tail
 that flaps, a dorsal fin, a gill line and a proper eye), a pufferfish, drifting
 jellyfish, a crab that patrols the sand, bubbles from fish mouths and sand

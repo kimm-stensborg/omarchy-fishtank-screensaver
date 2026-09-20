@@ -751,17 +751,27 @@ def apply_theme(colors):
 # ------------------------------------------------------------------ actors ---
 
 class Fish:
+    @staticmethod
+    def tank_width_cap(tank):
+        """No fish wider than a quarter of the tank, however small it gets."""
+        return tank.w // 4
+
     def __init__(self, tank, species=None, depth=None):
         self.tank = tank
         self.species = species or random.choice(SPECIES)
         self.depth = depth if depth is not None else random.random()
-        scale = 2 if self.depth > 0.80 else 1
-        base_w = random.choice((11, 13, 15)) if scale == 2 else \
-            random.choice((13, 15, 17, 19, 21))
-        base_h = max(5, int(base_w * 0.44) | 1)
+        # Sized from the tank rather than in absolute pixels: the screensaver
+        # runs at font size 18, which is half the grid of an everyday
+        # terminal, and a fish measured in pixels swells to fill it.
+        near = self.depth > 0.80
+        base_h = int(round(tank.h * (0.115 if near else 0.078)))
+        base_h += random.choice((-1, 0, 0, 1))
+        base_h = int(clamp(base_h, 5, 19)) | 1
+        base_w = max(9, int(round(base_h / 0.44)) | 1)
+        base_w = min(base_w, max(9, self.tank_width_cap(tank)))
         frames = build_fish_frames(base_w, base_h, self.species)
         fade = (1.0 - self.depth) * 0.38
-        frames = [f.tinted(WATER_TOP, fade).scaled(scale) for f in frames]
+        frames = [f.tinted(WATER_TOP, fade) for f in frames]
         self.right = frames
         self.left = [f.mirrored() for f in frames]
         self.w = frames[0].w
@@ -1060,13 +1070,16 @@ class Tank:
         self.flakes = []
         self.actors = []
         count = opts.fish if opts.fish is not None else \
-            clamp(int(self.w * self.h / 900), 5, 18)
+            clamp(int(self.w * self.h / 700), 6, 20)
         for _ in range(count):
             self.actors.append(Fish(self))
-        if count >= 5:
+        # The hand-drawn sprites are a fixed size, so a very small tank simply
+        # does not get them rather than getting one that fills it.
+        if count >= 5 and self.w >= 60:
             self.actors.append(Puffer(self))
-        for _ in range(max(1, count // 6)):
-            self.actors.append(Jelly(self))
+        if self.w >= 50:
+            for _ in range(max(1, count // 6)):
+                self.actors.append(Jelly(self))
         self.actors.append(Crab(self))
         self.actors.sort(key=lambda a: getattr(a, "depth", 0.5))
 
@@ -1091,6 +1104,17 @@ class Tank:
         if not mask:
             return []
         mw, mh, pixels = mask
+
+        # On a narrow tank -- the screensaver's font size 18 gives about a
+        # hundred columns -- the logo is wider than the water it is etched
+        # into, so shrink it to fit before anything else.
+        budget_w, budget_h = int(self.w * 0.62), int(usable * 0.48)
+        if mw > budget_w or mh > budget_h:
+            fit = min(budget_w / float(mw), budget_h / float(mh))
+            mask = resize_mask(mask, max(8, int(round(mw * fit))),
+                               max(4, int(round(mh * fit))))
+            mw, mh, pixels = mask
+
         scale = max(1, min(int(self.w * 0.66) // mw, int(usable * 0.52) // mh))
         ox = (self.w - mw * scale) // 2
         oy = max(2, (usable - mh * scale) // 2)
