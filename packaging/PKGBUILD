@@ -10,7 +10,7 @@ depends=('python')
 optdepends=('omarchy: to run as the system screensaver'
             'hyprland: for one ocean across several monitors')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('SKIP')
+sha256sums=('490947480d5426d2f73cef954f5c277133e4eb9cbc6718e8538e5d9964f44b41')
 
 package() {
   cd "$srcdir/$pkgname-$pkgver"
