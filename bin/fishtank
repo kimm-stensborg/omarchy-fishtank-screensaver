@@ -122,7 +122,7 @@ class Sprite:
         return Sprite(self.w, self.h, pixels)
 
 
-def fish_art(w, h, species, flap):
+def fish_art(w, h, species, flap, barbels=False):
     """Generate one frame of a fish, facing right, as rows of palette keys.
 
     Tail fan first, then a teardrop body painted over its root so the two
@@ -242,6 +242,19 @@ def fish_art(w, h, species, flap):
     if 0 <= my < h and grid[my][mx] in "BLD":
         grid[my][mx] = "O"
 
+    # A bottom feeder trails barbels from under its chin.
+    if barbels:
+        for i in range(max(2, w // 7)):
+            bx = mx - i
+            if not 0 <= bx < w:
+                continue
+            column = [y for y in range(h) if grid[y][bx] != "."]
+            if not column:
+                continue
+            by = column[-1] + 1 + (i // 2)
+            if 0 <= by < h and grid[by][bx] == ".":
+                grid[by][bx] = "A"
+
     # Outline: pad by a pixel, then darken every empty pixel touching the fish.
     pw, ph = w + 2, h + 2
     padded = [["." for _ in range(pw)] for _ in range(ph)]
@@ -273,10 +286,10 @@ def fish_art(w, h, species, flap):
     return ["".join(row) for row in grid], palette
 
 
-def build_fish_frames(w, h, species):
+def build_fish_frames(w, h, species, barbels=False):
     frames = []
     for flap in (-1, 0, 1, 0):
-        rows, palette = fish_art(w, h, species, flap)
+        rows, palette = fish_art(w, h, species, flap, barbels)
         frames.append(Sprite.from_art(rows, palette))
     return frames
 
@@ -858,6 +871,58 @@ def make_puffer(size):
     return ["".join(row) for row in grid]
 
 
+def make_seahorse(w, h):
+    """A seahorse: snout and crest at the top, belly in the middle, and a
+    tail that curls under. Built from a centre line with a width along it, so
+    the shape stays connected at every size."""
+    w = max(6, w)
+    h = max(10, h)
+    grid = [["." for _ in range(w)] for _ in range(h)]
+
+    def span(y, cx, r, key="B", edge="b"):
+        lo, hi = int(round(cx - r)), int(round(cx + r))
+        for x in range(lo, hi + 1):
+            if 0 <= x < w:
+                grid[y][x] = key if (x > lo and x < hi) else edge
+
+    head_end = max(2, int(h * 0.20))
+    tail_start = int(h * 0.62)
+
+    for y in range(h):
+        f = y / float(h - 1)
+        if y < head_end:                       # head, held high and forward
+            cx = w * 0.58
+            r = w * 0.26
+        elif y < tail_start:                   # neck into a rounded belly
+            t = (y - head_end) / float(max(1, tail_start - head_end))
+            cx = w * (0.55 - 0.16 * math.sin(t * math.pi))
+            r = w * (0.20 + 0.16 * math.sin(t * math.pi))
+        else:                                  # tail, curling under
+            t = (y - tail_start) / float(max(1, h - tail_start))
+            cx = w * (0.39 + 0.34 * math.sin(t * math.pi * 1.15))
+            r = w * (0.17 * (1.0 - 0.55 * t))
+        span(y, cx, max(0.9, r))
+
+    # Snout, pointing right out of the head.
+    snout_y = max(1, head_end // 2)
+    for x in range(int(round(w * 0.58 + w * 0.26)), w):
+        if 0 <= snout_y < h:
+            grid[snout_y][x] = "b"
+
+    # Eye, and a crest of spines down the back.
+    ex = int(round(w * 0.58 + w * 0.06))
+    if 0 <= ex < w and head_end > 1:
+        grid[max(0, snout_y - 1)][ex] = "K"
+    for y in range(head_end, tail_start, 2):
+        row = grid[y]
+        for x in range(w - 1, -1, -1):
+            if row[x] != ".":
+                if x + 1 < w and row[x + 1] == ".":
+                    row[x + 1] = "A"
+                break
+    return ["".join(row) for row in grid]
+
+
 def make_jelly(w, h):
     """A domed bell with tentacles trailing under it."""
     w = max(5, w | 1)
@@ -896,6 +961,11 @@ def make_jelly(w, h):
 # ------------------------------------------------------------------ actors ---
 
 class Fish:
+    # Subclasses build themselves rather than calling up, so these are class
+    # defaults: a fish belongs to no school until one claims it.
+    school = None
+    slot = (0.0, 0.0)
+
     @staticmethod
     def tank_width_cap(tank):
         """No fish wider than a quarter of the tank, however small it gets."""
@@ -936,6 +1006,8 @@ class Fish:
         self.bubble_at = time.monotonic() + random.uniform(4, 20)
         self.drift = random.uniform(-0.25, 0.25)
         self.reach = random.uniform(24.0, 68.0)
+        self.school = None
+        self.slot = (0.0, 0.0)
 
     def hunt(self, dt):
         """Chase the nearest crumb. Returns True while there is one."""
@@ -966,8 +1038,44 @@ class Fish:
             self.frame = (self.frame + 1) % 4
         return True
 
+    def shoal(self, dt):
+        """Keep station on the school, loosely enough to look alive."""
+        school = self.school
+        want_x = school.x + self.slot[0]
+        want_y = school.y + self.slot[1]
+        dx, dy = want_x - self.x, want_y - self.y
+        pull = 2.2
+        self.x += clamp(dx * 0.55, -self.speed * pull, self.speed * pull) * dt
+        self.y += clamp(dy * 0.55, -self.speed, self.speed) * dt
+        self.y = clamp(self.y, 1.0, self.tank.floor - self.h - 1)
+        if abs(dx) > self.w * 0.6:
+            self.dir = 1 if dx > 0 else -1
+        else:
+            self.dir = school.dir
+        self.frame_t += dt * (3.0 + self.speed * 0.25)
+        if self.frame_t >= 1.0:
+            self.frame_t -= 1.0
+            self.frame = (self.frame + 1) % 4
+
+    def keep_clear(self):
+        """Nothing swims through the castle."""
+        box = self.tank.castle_box
+        if not box:
+            return
+        x0, y0, x1, y1 = box
+        if self.x + self.w < x0 or self.x > x1 or self.y + self.h < y0:
+            return
+        self.y = y0 - self.h - 1
+        if self.y < 1:
+            self.y = 1
+
     def update(self, dt, now):
         if self.tank.flakes and self.hunt(dt):
+            self.keep_clear()
+            return
+        if self.school is not None:
+            self.shoal(dt)
+            self.keep_clear()
             return
         self.x += self.dir * self.speed * dt
         self.phase += dt * (1.4 + self.speed * 0.08)
@@ -1001,9 +1109,163 @@ class Fish:
         elif self.x > self.tank.w + 4:
             self.x = -self.w - 2
 
+        self.keep_clear()
+
     def draw(self, buf):
         sprite = self.right[self.frame] if self.dir > 0 else self.left[self.frame]
         self.tank.blit(buf, sprite, int(self.x), int(self.y))
+
+
+class School:
+    """A loose shoal. Small fish keep station on it instead of each wandering
+    off alone, which is most of what makes a tank look alive."""
+
+    def __init__(self, tank):
+        self.tank = tank
+        self.x = random.uniform(0, tank.w)
+        self.y = random.uniform(tank.h * 0.15, tank.floor * 0.75)
+        self.dir = random.choice((-1, 1))
+        self.speed = random.uniform(4.0, 9.0)
+        self.turn_at = 0.0
+        self.phase = random.uniform(0, math.tau)
+
+    def update(self, dt, now):
+        self.x += self.dir * self.speed * dt
+        self.phase += dt * 0.8
+        self.y += math.sin(self.phase) * 2.2 * dt
+        self.y = clamp(self.y, 3, self.tank.floor * 0.85)
+        if now > self.turn_at and 4 < self.x < self.tank.w - 4:
+            self.dir *= -1 if random.random() < 0.5 else 1
+            self.turn_at = now + random.uniform(6, 18)
+        if self.x < -self.tank.w * 0.3:
+            self.x = self.tank.w + 4
+        elif self.x > self.tank.w * 1.3:
+            self.x = -4
+
+
+class Eel:
+    """A long body that swims by putting a wave through itself."""
+
+    def __init__(self, tank):
+        self.tank = tank
+        species = random.choice(SPECIES)
+        body = species[1]
+        self.body = pack(mix(body, INK, 0.30))
+        self.belly = pack(mix(body, WHITE, 0.15))
+        self.eye = pack(WHITE)
+        self.length = int(clamp(tank.w * 0.17, 12, 64))
+        self.radius = max(1.5, tank.h * 0.030)
+        self.dir = random.choice((-1, 1))
+        self.speed = random.uniform(3.0, 6.5)
+        self.x = random.uniform(0, tank.w)
+        self.y = random.uniform(tank.floor * 0.45, tank.floor - self.radius * 3)
+        self.phase = random.uniform(0, math.tau)
+        self.depth = 0.5
+
+    def update(self, dt, now):
+        self.x += self.dir * self.speed * dt
+        self.phase += dt * 3.2
+        self.y += math.sin(self.phase * 0.21) * 1.2 * dt
+        self.y = clamp(self.y, self.tank.floor * 0.35,
+                       self.tank.floor - self.radius * 2 - 1)
+        if self.x < -self.length - 4:
+            self.x = self.tank.w + self.length
+        elif self.x > self.tank.w + self.length + 4:
+            self.x = -self.length
+
+    def draw(self, buf):
+        # A long, low wave down the body: a tight one reads as a zigzag wire
+        # rather than an animal.
+        amp = self.radius * 1.9
+        for i in range(self.length):
+            t = i / float(self.length)
+            px = self.x - self.dir * i
+            py = self.y + math.sin(self.phase - i * 0.24) * amp * (0.25 + 0.75 * t)
+            r = max(0.8, self.radius * (1.0 - 0.62 * t))
+            for dy in range(int(-r), int(r) + 1):
+                for dx in range(int(-r), int(r) + 1):
+                    if dx * dx + dy * dy > r * r:
+                        continue
+                    colour = self.belly if dy > 0 and t < 0.8 else self.body
+                    self.tank.px(buf, int(px + dx), int(py + dy), colour)
+        # Eye, on the head.
+        self.tank.px(buf, int(self.x + self.dir * 0.5),
+                     int(self.y - max(1, self.radius * 0.5)), self.eye)
+
+
+class Seahorse:
+    """Hangs in the weeds, bobbing, going almost nowhere."""
+
+    def __init__(self, tank):
+        self.tank = tank
+        species = random.choice(SPECIES)
+        h = int(clamp(round(tank.h * 0.13), 10, 26))
+        w = max(6, int(h * 0.58))
+        palette = {
+            "B": species[1],
+            "b": shade(species[1], 0.72),
+            "A": mix(species[3], WHITE, 0.2),
+            "K": INK,
+        }
+        sprite = Sprite.from_art(make_seahorse(w, h), palette)
+        self.right, self.left = sprite, sprite.mirrored()
+        self.w, self.h = sprite.w, sprite.h
+        self.dir = random.choice((-1, 1))
+        self.x = random.uniform(2, max(3, tank.w - self.w - 2))
+        self.y = random.uniform(tank.floor * 0.5, tank.floor - self.h - 2)
+        self.phase = random.uniform(0, math.tau)
+        self.drift = random.uniform(-0.8, 0.8)
+        self.depth = 0.6
+
+    def update(self, dt, now):
+        self.phase += dt * 1.5
+        self.y += math.sin(self.phase) * 1.6 * dt
+        self.x += self.drift * dt
+        if random.random() < dt * 0.08:
+            self.drift = random.uniform(-1.2, 1.2)
+            self.dir = 1 if self.drift > 0 else -1
+        self.x = clamp(self.x, 1, self.tank.w - self.w - 1)
+        self.y = clamp(self.y, self.tank.floor * 0.35,
+                       self.tank.floor - self.h - 1)
+
+    def draw(self, buf):
+        self.tank.blit(buf, self.right if self.dir > 0 else self.left,
+                       int(self.x), int(self.y))
+
+
+class BottomFeeder(Fish):
+    """Noses along the sand, in no hurry, with barbels."""
+
+    def __init__(self, tank):
+        Fish.__init__(self, tank, depth=random.uniform(0.55, 0.8))
+        base_h = max(4, int(round(tank.h * 0.055)))
+        base_w = max(11, int(round(base_h / 0.32)))
+        frames = build_fish_frames(base_w, base_h, self.species, barbels=True)
+        self.right = frames
+        self.left = [f.mirrored() for f in frames]
+        self.w, self.h = frames[0].w, frames[0].h
+        self.speed = random.uniform(1.6, 3.4)
+        self.bob = 0.3
+        self.pause_until = 0.0
+        self.y = tank.floor - self.h - 1
+
+    def update(self, dt, now):
+        if self.tank.flakes and self.hunt(dt):
+            return
+        if now < self.pause_until:
+            return
+        self.x += self.dir * self.speed * dt
+        self.y = self.tank.sand_top[int(clamp(self.x + self.w * 0.5, 0,
+                                              self.tank.w - 1))] - self.h
+        self.frame_t += dt * 2.0
+        if self.frame_t >= 1.0:
+            self.frame_t -= 1.0
+            self.frame = (self.frame + 1) % 4
+        if random.random() < dt * 0.15:
+            self.pause_until = now + random.uniform(0.8, 3.0)
+        if self.x < -self.w or self.x > self.tank.w:
+            self.dir *= -1
+            self.x = clamp(self.x, 0, self.tank.w - self.w)
 
 
 class Silhouette:
@@ -1275,10 +1537,29 @@ class Tank:
         self.bubbles = []
         self.flakes = []
         self.actors = []
+        self.schools = []
         count = opts.fish if opts.fish is not None else \
             clamp(int(self.w * self.h / 900), 6, 24)
         for _ in range(count):
             self.actors.append(Fish(self))
+
+        # Put the smaller fish into shoals, a few each.
+        self.schools = []
+        if self.w >= 90:
+            loners = [a for a in self.actors if isinstance(a, Fish) and a.depth < 0.5]
+            random.shuffle(loners)
+            while len(loners) >= 3:
+                size = min(len(loners), random.randint(3, 6))
+                school = School(self)
+                for i in range(size):
+                    fish = loners.pop()
+                    fish.school = school
+                    angle = i * math.tau / size
+                    spread = fish.w * 1.6
+                    fish.slot = (math.cos(angle) * spread + random.uniform(-2, 2),
+                                 math.sin(angle) * spread * 0.5 + random.uniform(-1, 1))
+                    fish.x, fish.y = school.x + fish.slot[0], school.y + fish.slot[1]
+                self.schools.append(school)
         # The hand-drawn sprites are a fixed size, so a very small tank simply
         # does not get them rather than getting one that fills it.
         if count >= 5 and self.w >= 60:
@@ -1286,6 +1567,12 @@ class Tank:
         if self.w >= 50:
             for _ in range(max(1, count // 6)):
                 self.actors.append(Jelly(self))
+        if self.w >= 80:
+            self.actors.append(Eel(self))
+            for _ in range(1 + (self.w >= 200)):
+                self.actors.append(Seahorse(self))
+            for _ in range(1 + (self.w >= 180)):
+                self.actors.append(BottomFeeder(self))
         self.actors.append(Crab(self))
         self.actors.sort(key=lambda a: getattr(a, "depth", 0.5))
 
@@ -1431,8 +1718,10 @@ class Tank:
                                  CASTLE_PALETTE)
         cx = int(self.w * random.uniform(0.12, 0.7))
         cx = clamp(cx, 1, max(1, self.w - castle.w - 1))
-        items.append((castle, cx, self.floor - castle.h + 2))
+        castle_y = self.floor - castle.h + 2
+        items.append((castle, cx, castle_y))
         self.castle_rect = (cx, castle.w)
+        self.castle_box = (cx, castle_y, cx + castle.w, castle_y + castle.h)
 
         chest_h = int(clamp(round(self.h * 0.075), 4, 14))
         chest = Sprite.from_art(make_chest(int(chest_h * 1.7), chest_h),
@@ -1495,6 +1784,8 @@ class Tank:
 
     def update(self, dt, now):
         self.t += dt
+        for school in self.schools:
+            school.update(dt, now)
         for actor in self.actors:
             actor.update(dt, now)
         for far in self.backdrop:

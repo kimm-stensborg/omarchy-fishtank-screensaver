@@ -87,6 +87,26 @@ for cols, rows in SIZES:
     except Exception as error:                      # noqa: BLE001
         check("draws %dx%d" % (cols, rows), False, repr(error))
 
+# -- the cast, and that nothing swims through the castle --------------------
+
+for cols, rows in ((160, 45), (320, 81)):
+    tank, _ = run_tank(cols, rows, Opts(), frames=40)
+    kinds = {type(a).__name__ for a in tank.actors}
+    for wanted in ("Fish", "Eel", "Seahorse", "BottomFeeder", "Crab", "Jelly"):
+        check("%dx%d has a %s" % (cols, rows, wanted), wanted in kinds, str(sorted(kinds)))
+    check("%dx%d has shoals" % (cols, rows), len(tank.schools) > 0)
+    shoaling = [a for a in tank.actors if getattr(a, "school", None) is not None]
+    check("%dx%d has fish in the shoals" % (cols, rows), len(shoaling) >= 3)
+    if tank.castle_box:
+        x0, y0, x1, y1 = tank.castle_box
+        inside = [a for a in tank.actors
+                  if isinstance(a, ft.Fish) and not isinstance(a, ft.BottomFeeder)
+                  and a.x + a.w > x0 and a.x < x1 and a.y + a.h > y0 and a.y < y1]
+        check("%dx%d: nothing swims through the castle" % (cols, rows), not inside,
+              "%d inside" % len(inside))
+    check("%dx%d has a far layer" % (cols, rows), len(tank.backdrop) > 0)
+    check("%dx%d has fronds up front" % (cols, rows), len(tank.front_weeds) > 0)
+
 # -- every installed theme ---------------------------------------------------
 
 themes = ft.installed_themes()
