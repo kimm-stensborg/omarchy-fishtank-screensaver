@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.kimm-stensborg.fishtank",
   "name": "Fish Tank Screensaver",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "author": "Kimm Stensborg",
   "license": "MIT",
   "description": "An 8-bit fish tank as the Omarchy screensaver, with a bar button to dive in or feed the fish",
