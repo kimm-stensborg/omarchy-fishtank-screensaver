@@ -368,6 +368,39 @@ check("one changed pixel sends one row", 0 < moved.text.count("\u2580") <= 160 *
       "%d cells" % moved.text.count("\u2580"))
 ft.forget_frame()
 
+# -- feeding looks like eating, not like spinning ---------------------------
+
+daylight = Opts()
+daylight.night = 0.0          # after dark everything moves at half speed
+random.seed(4)
+tank = ft.Tank(320, 81, daylight)
+swimmers = [a for a in tank.actors if isinstance(a, ft.Fish)]
+now = 1000.0
+tank.feed(now)
+crumbs = len(tank.flakes)
+turns = {id(f): 0 for f in swimmers}
+facing = {id(f): f.dir for f in swimmers}
+for _ in range(24 * 6):
+    now += 1 / 24.0
+    tank.update(1 / 24.0, now)
+    for fish in swimmers:
+        if fish.dir != facing[id(fish)]:
+            turns[id(fish)] += 1
+            facing[id(fish)] = fish.dir
+worst = max(turns.values())
+check("a feeding fish does not spin on the spot", worst <= 12,
+      "%d turns in six seconds" % worst)
+check("fish commit to one crumb at a time",
+      all(f.target is None or f.target in tank.flakes for f in swimmers))
+check("and the food does get eaten", len(tank.flakes) < crumbs,
+      "%d of %d left" % (len(tank.flakes), crumbs))
+
+for _ in range(24 * 12):
+    now += 1 / 24.0
+    tank.update(1 / 24.0, now)
+check("a feed is finished inside twenty seconds", not tank.flakes,
+      "%d left" % len(tank.flakes))
+
 # -- the predator, and the hints ---------------------------------------------
 
 random.seed(8)

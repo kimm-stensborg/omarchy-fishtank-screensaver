@@ -1445,6 +1445,9 @@ class Fish:
     slot = (0.0, 0.0)
     # Subclasses that build themselves get no resting spot until they set one.
     rest_y = None
+    # What this fish is going after, and when it last turned about.
+    target = None
+    turned_at = -10.0
 
     @staticmethod
     def tank_width_cap(tank):
@@ -1492,28 +1495,57 @@ class Fish:
         self.rest_y = random.uniform(0.55, 0.92) * (tank.floor - self.h)
 
     def hunt(self, dt):
-        """Chase the nearest crumb. Returns True while there is one."""
-        flake = self.tank.nearest_flake(self.x + self.w * 0.5,
-                                        self.y + self.h * 0.5,
-                                        getattr(self, "reach", 45.0))
-        if flake is None:
+        """Chase one crumb until it is eaten. True while hunting.
+
+        A fish that picks the nearest crumb afresh every frame, and turns to
+        face whichever side of it that crumb is on, ends up spinning on the
+        spot -- which is not how anything eats. So it commits to one crumb,
+        swims at it without overshooting, and only turns when the food is
+        properly behind it.
+        """
+        reach = getattr(self, "reach", 45.0)
+        cx, cy = self.x + self.w * 0.5, self.y + self.h * 0.5
+        target = self.target
+        if target is not None:
+            if target.dead:
+                target = None
+            else:
+                # Kept a little past the range it was spotted at, so a crumb
+                # is not dropped and re-found on alternate frames.
+                dx, dy = target.x - cx, (target.y - cy) * 1.6
+                if dx * dx + dy * dy > (reach * 1.4) ** 2:
+                    target = None
+        if target is None:
+            target = self.tank.nearest_flake(cx, cy, reach)
+        self.target = target
+        if target is None:
             return False
+
         mouth_x = self.x + (self.w if self.dir > 0 else 0)
         mouth_y = self.y + self.h * 0.5
-        dx = flake.x - mouth_x
-        dy = flake.y - mouth_y
+        dx = target.x - mouth_x
+        dy = target.y - mouth_y
         if abs(dx) < 2.0 and abs(dy) < 2.0:
-            flake.dead = True
+            target.dead = True
+            self.target = None
             self.tank.bubbles.append(Bubble(self.tank, mouth_x, mouth_y,
                                             size=1, depth=self.depth))
             return True
-        # Turn toward it, then put on a burst of speed.
-        if abs(dx) > self.w * 0.4:
-            self.dir = 1 if dx > 0 else -1
+
+        # Swim at it, never past it.
         rush = self.speed * 1.5 + 4.0
-        self.x += clamp(dx, -1.0, 1.0) * rush * dt
-        self.y += clamp(dy, -1.0, 1.0) * rush * 0.55 * dt
+        step = rush * dt
+        self.x += clamp(dx, -step, step)
+        self.y += clamp(dy, -step * 0.55, step * 0.55)
         self.y = clamp(self.y, 1.0, self.tank.floor - self.h - 1)
+
+        # Turn about only for food that is genuinely behind, and not more
+        # than twice a second, or the turn itself becomes the flicker.
+        behind = (dx > 0) != (self.dir > 0)
+        if behind and abs(dx) > self.w * 0.8 and self.tank.t - self.turned_at > 0.5:
+            self.dir = 1 if dx > 0 else -1
+            self.turned_at = self.tank.t
+
         self.frame_t += dt * 9.0
         if self.frame_t >= 1.0:
             self.frame_t -= 1.0
