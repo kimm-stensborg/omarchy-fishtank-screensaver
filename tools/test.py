@@ -557,6 +557,21 @@ if not QUICK:
         check("omarchy accepts the plugin", done.returncode == 0,
               done.stdout + done.stderr)
 
+# -- the tools still run -----------------------------------------------------
+
+if not QUICK:
+    with tempfile.TemporaryDirectory() as tmp:
+        for tool, out, extra in (("preview.py", "a.png", {}),
+                                 ("sheet.py", "b.png", {}),
+                                 ("make_gif.py", "c.gif", {"GIF_FEED": "0.2"})):
+            done = subprocess.run(
+                [sys.executable, os.path.join(ROOT, "tools", tool),
+                 os.path.join(tmp, out), "60", "16", "1", "1", "6"][:6 if tool != "sheet.py" else 3],
+                capture_output=True, text=True, env=dict(os.environ, **extra))
+            check("tools/%s runs" % tool, done.returncode == 0, done.stderr.strip()[:200])
+            check("tools/%s writes something" % tool,
+                  os.path.exists(os.path.join(tmp, out)))
+
 # -- shell scripts parse -----------------------------------------------------
 
 for script in ("install.sh", "uninstall.sh", "bin/omarchy-screensaver",

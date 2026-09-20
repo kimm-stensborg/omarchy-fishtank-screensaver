@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
-"""Render the tank to an animated GIF for the README.
+"""Render the tank to an animated GIF, or to a video.
 
     tools/make_gif.py out.gif [cols] [rows] [seconds] [scale] [fps]
+    tools/make_gif.py out.mp4 …          # needs ffmpeg; anything ffmpeg writes
 
-Writes GIF89a by hand -- no Pillow, same as everything else here. The palette
-is built from the colours the frames actually use, quantised to 256.
+GIF89a is written by hand -- no Pillow, same as everything else here -- with
+a palette built from the colours the frames actually use. A video is the raw
+frames piped to ffmpeg, which keeps every colour instead of the 256 a GIF
+allows.
+
+    GIF_THEME=gruvbox GIF_NIGHT=0.85 GIF_FEED=2.5 GIF_PREDATOR=6 GIF_SEED=12
 """
 
 import importlib.util
@@ -96,6 +101,24 @@ def lzw(indices, bits):
     return bytes(out)
 
 
+def write_video(path, width, height, frames, fps):
+    """Hand the frames to ffmpeg as raw RGB."""
+    import shutil
+    import subprocess
+    if not shutil.which("ffmpeg"):
+        raise SystemExit("ffmpeg is needed for %s" % path)
+    done = subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error",
+         "-f", "rawvideo", "-pix_fmt", "rgb24",
+         "-s", "%dx%d" % (width, height), "-r", str(fps), "-i", "-",
+         # Even dimensions and yuv420p, or half the players will not open it.
+         "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2",
+         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", path],
+        input=b"".join(frames))
+    if done.returncode != 0:
+        raise SystemExit("ffmpeg failed for %s" % path)
+
+
 def main():
     path = sys.argv[1] if len(sys.argv) > 1 else "preview.gif"
     cols = int(sys.argv[2]) if len(sys.argv) > 2 else 150
@@ -113,20 +136,43 @@ def main():
     buf = [0] * (cols * rows * 2)
     width, height = tank.w * scale, tank.h * scale
 
+    video = os.path.splitext(path)[1].lower() not in (".gif", "")
+
     # Render first, so the palette can be chosen from what is really there.
     raw, counts = [], {}
     now, dt = 1000.0, 1.0 / fps
     feed_at = float(os.environ.get("GIF_FEED", "-1"))
+    hunter_at = float(os.environ.get("GIF_PREDATOR", "-1"))
     for step in range(int(seconds * fps)):
         now += dt
         if feed_at >= 0 and step == int(feed_at * fps):
             tank.feed(now)
+        if hunter_at >= 0 and step == int(hunter_at * fps) and tank.predator:
+            tank.predator.next_at = now        # stage it for the clip
         tank.update(dt, now)
         tank.draw(buf)
         frame = list(buf)
         raw.append(frame)
         for colour in frame:
             counts[colour] = counts.get(colour, 0) + 1
+
+    if video:
+        rows_out = []
+        for frame in raw:
+            line_cache = {}
+            for y in range(tank.h):
+                line = bytearray()
+                for x in range(tank.w):
+                    c = frame[y * tank.w + x]
+                    line += bytes(((c >> 16) & 255, (c >> 8) & 255, c & 255)) * scale
+                rows_out.append(bytes(line) * scale)
+        stride = tank.h
+        frames_bytes = [b"".join(rows_out[i * stride:(i + 1) * stride])
+                        for i in range(len(raw))]
+        write_video(path, width, height, frames_bytes, fps)
+        print("wrote %s (%dx%d, %d frames, %.1fs)"
+              % (path, width, height, len(raw), len(raw) / fps))
+        return
 
     palette, lookup = build_palette(counts)
 

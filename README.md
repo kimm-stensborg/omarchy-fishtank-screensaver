@@ -110,6 +110,15 @@ by hand.
   low in the water that fades after a few seconds, and stops appearing for
   good once you have pressed one of them.
 
+![Feeding](feeding.png)
+
+*`F4`, and everyone comes up for it.*
+
+![After sunset](night.png)
+
+*The same tank once the sun has gone down: the light out of the water, one
+shaft of moonlight left, and the jellyfish still glowing.*
+
 ## In the tank
 
 - **Your theme.** The palette comes from `omarchy-theme-color`, the same
