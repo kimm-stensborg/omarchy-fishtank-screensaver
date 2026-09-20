@@ -2596,6 +2596,10 @@ for _i, _codes in enumerate((
         FUNCTION_KEYS[_code] = _i + 1
 
 
+# Shift+F5 hands the light back to the day-and-night cycle.
+FUNCTION_KEYS[b"\x1b[15;2~"] = 15
+
+
 def function_key(chunk):
     """Which F-key a keypress is, or None for any other key."""
     return FUNCTION_KEYS.get(chunk)
@@ -2869,15 +2873,19 @@ def main():
                     last_state = state_mtime()
                     label = {0: "no clock", 24: "clock 24h",
                              12: "clock 12h"}[clock_hours]
-                elif key == 5:                         # F5: day / night / both
-                    order = ("cycle", 1.0, 0.0)
-                    where = order.index(night_choice) if night_choice in order else 0
-                    night_choice = order[(where + 1) % len(order)]
+                elif key in (5, 15):                   # F5: the light
+                    if key == 15:                      # shift: back to the cycle
+                        night_choice = "cycle"
+                        label = "day & night"
+                    else:
+                        # Flip what is on screen now, rather than stepping
+                        # through modes: pressing this should always change
+                        # something you can see.
+                        night_choice = 0.0 if tank.night >= 0.5 else 1.0
+                        label = "night" if night_choice else "daylight"
                     tank.set_night_mode(night_choice)
                     save_state(night=night_choice)
                     last_state = state_mtime()
-                    label = {"cycle": "day & night", 1.0: "night",
-                             0.0: "daylight"}[night_choice]
                 elif key == 3:                         # F3: cycle the logo
                     opts.logo = logos[(logos.index(opts.logo) + 1)
                                       % len(logos)] if opts.logo in logos \

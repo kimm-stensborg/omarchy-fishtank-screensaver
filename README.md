@@ -89,10 +89,11 @@ in a terminal by hand.
 | F2 | Back to the theme the desktop is wearing |
 | F3 | Cycle the back wall: wordmark, lockup, mark, nothing |
 | F4 | Feed the fish |
-| F5 | Day, night, or the cycle between them |
+| F5 | Flip the light: dark if it is light, light if it is dark |
+| Shift+F5 | Hand the light back to the day-and-night cycle |
 | F6 | The time in the corner: 24-hour, 12-hour, or off |
 
-F1, F2, F3 and F5 name what they just picked in the top-left corner, in the tank's
+F1, F2, F3, F5 and F6 name what they just picked in the top-left corner, in the tank's
 own pixels, and the text fades out after two seconds. **What you pick is what
 the tank opens with next time** -- it is written to
 `$XDG_STATE_HOME/fishtank/state.json` and read at startup, so you can leave
@@ -167,6 +168,10 @@ the water over a minute and a half, the god rays thin to a single shaft of
 moonlight, everything slows down, the fish sink toward a resting spot -- and
 the jellyfish keep their colour and pick up a faint halo, because they are
 the one thing in there that makes its own light. Then dawn brings it back.
+
+F5 flips whatever is on screen right now rather than stepping through modes,
+so it always changes something you can see; Shift+F5 hands the light back to
+the cycle.
 
 ```bash
 fishtank --night 1      # hold it at night

@@ -312,8 +312,23 @@ for cols, rows in ((96, 30), (320, 81)):
 
 for code, want in ((b"\x1bOP", 1), (b"\x1b[11~", 1), (b"\x1bOQ", 2),
                    (b"\x1bOR", 3), (b"\x1bOS", 4), (b"\x1b[15~", 5),
-                   (b"\x1b[17~", 6), (b"q", None), (b"\x1b", None)):
+                   (b"\x1b[17~", 6), (b"\x1b[15;2~", 15),
+                   (b"q", None), (b"\x1b", None)):
     check("key %r reads as %s" % (code, want), ft.function_key(code) == want)
+
+# -- F5 always changes what is on screen -------------------------------------
+
+def press_f5(mode, lit_now):
+    """What F5 picks, given the mode it is in and how dark the tank is."""
+    return 0.0 if lit_now >= 0.5 else 1.0
+
+
+for mode, lit, want in ((0.0, 0.0, 1.0),        # sitting in daylight -> night
+                        (1.0, 1.0, 0.0),        # sitting in night -> daylight
+                        ("cycle", 0.0, 1.0),    # cycling, currently day -> night
+                        ("cycle", 1.0, 0.0)):   # cycling, currently night -> day
+    check("F5 from %r at light %.0f gives %r" % (mode, lit, want),
+          press_f5(mode, lit) == want)
 
 # -- state round-trip --------------------------------------------------------
 
