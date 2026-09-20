@@ -286,11 +286,20 @@ if not QUICK:
 # -- shell scripts parse -----------------------------------------------------
 
 for script in ("install.sh", "uninstall.sh", "bin/omarchy-screensaver",
-               "bin/omarchy-launch-screensaver"):
+               "bin/omarchy-launch-screensaver",
+               "packaging/omarchy-fishtank-screensaver"):
     done = subprocess.run(["bash", "-n", os.path.join(ROOT, script)],
                           capture_output=True, text=True)
     check("%s parses" % script, done.returncode == 0, done.stderr.strip())
 
+
+# The package must not try to own a file the omarchy package already has.
+with open(os.path.join(ROOT, "packaging", "PKGBUILD"), encoding="utf-8") as fh:
+    pkgbuild = fh.read()
+check("the package stays out of /usr/bin/omarchy-screensaver",
+      '"$pkgdir/usr/bin/omarchy-screensaver"' not in pkgbuild)
+check("the package ships the enable wrapper",
+      "usr/bin/omarchy-fishtank-screensaver" in pkgbuild)
 
 print("%d checks, %d failed" % (checks, len(failures)))
 for line in failures:

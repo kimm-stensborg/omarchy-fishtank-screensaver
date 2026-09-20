@@ -1,0 +1,32 @@
+#!/bin/bash
+# Turn the fish tank on or off as the Omarchy screensaver.
+#
+# The package only puts the program on the system; this is what points the
+# screensaver at it, and it is the same script a git checkout uses, so both
+# ways of installing behave identically.
+
+set -euo pipefail
+
+LIB=/usr/lib/omarchy-fishtank-screensaver
+
+case "${1:-}" in
+enable)
+  shift
+  exec "$LIB/install.sh" "$@"
+  ;;
+disable)
+  shift
+  exec "$LIB/uninstall.sh" "$@"
+  ;;
+*)
+  cat <<USAGE
+Usage: omarchy-fishtank-screensaver <enable|disable> [options]
+
+  enable [--user|--system]   point Omarchy's screensaver at the fish tank
+  disable [--purge]          give it back to Omarchy
+
+Run the tank on its own with:  fishtank
+USAGE
+  exit 1
+  ;;
+esac

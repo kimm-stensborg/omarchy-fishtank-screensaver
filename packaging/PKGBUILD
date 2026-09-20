@@ -1,0 +1,36 @@
+# Maintainer: Kimm Stensborg <kimm-stensborg@users.noreply.github.com>
+pkgname=omarchy-fishtank-screensaver
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="An 8-bit fish tank that runs as the Omarchy screensaver"
+arch=('any')
+url="https://github.com/kimm-stensborg/omarchy-fishtank-screensaver"
+license=('MIT')
+depends=('python')
+optdepends=('omarchy: to run as the system screensaver'
+            'hyprland: for one ocean across several monitors')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+package() {
+  cd "$srcdir/$pkgname-$pkgver"
+
+  # The program lives here; nothing is installed over a file the omarchy
+  # package owns. Turning it on is a separate, reversible step.
+  install -dm755 "$pkgdir/usr/lib/$pkgname/bin"
+  install -Dm755 bin/fishtank "$pkgdir/usr/lib/$pkgname/bin/fishtank"
+  install -Dm755 bin/omarchy-screensaver "$pkgdir/usr/lib/$pkgname/bin/omarchy-screensaver"
+  install -Dm755 bin/omarchy-launch-screensaver \
+    "$pkgdir/usr/lib/$pkgname/bin/omarchy-launch-screensaver"
+  install -Dm755 install.sh "$pkgdir/usr/lib/$pkgname/install.sh"
+  install -Dm755 uninstall.sh "$pkgdir/usr/lib/$pkgname/uninstall.sh"
+
+  # The tank on its own needs no privileges and collides with nothing.
+  install -dm755 "$pkgdir/usr/bin"
+  ln -s "../lib/$pkgname/bin/fishtank" "$pkgdir/usr/bin/fishtank"
+  install -Dm755 packaging/omarchy-fishtank-screensaver \
+    "$pkgdir/usr/bin/omarchy-fishtank-screensaver"
+
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+}

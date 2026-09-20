@@ -2,7 +2,9 @@
 
 An 8-bit fish tank that runs as the Omarchy screensaver.
 
-![preview](preview.png)
+![the tank](preview.gif)
+
+<sub>Still: [preview.png](preview.png)</sub>
 
 Everything is drawn with half-block characters (`▀`) and truecolor, so one
 terminal cell holds two square pixels and the whole thing is pixel art rather
@@ -175,11 +177,26 @@ other line goes to `fishtank` as an argument.
 
 ## Install
 
+From the AUR:
+
+```bash
+yay -S omarchy-fishtank-screensaver
+omarchy-fishtank-screensaver enable
+```
+
+Or from a checkout:
+
 ```bash
 git clone https://github.com/kimm-stensborg/omarchy-fishtank-screensaver.git
 cd omarchy-fishtank-screensaver
 ./install.sh
 ```
+
+The package installs the program but does not switch your screensaver over --
+`enable` does that, and runs the same script a checkout does, so both ways
+behave identically. It owns no file that the `omarchy` package owns, so
+pacman never has to arbitrate between them. `fishtank` on its own is always
+available either way.
 
 That symlinks `bin/fishtank`, `bin/omarchy-screensaver` and
 `bin/omarchy-launch-screensaver` onto a directory that comes earlier on `PATH`
@@ -286,6 +303,7 @@ a finer grid looks better and costs more.
 
 ```bash
 ./test.sh [--quick]                                        # the checks
+tools/make_gif.py out.gif [cols] [rows] [secs] [scale] [fps]  # animated preview
 tools/preview.py out.png [cols] [rows] [seconds] [scale]   # one frame as a PNG
 tools/sheet.py sheet.png [scale] [fish-width]              # every sprite, big
 
