@@ -1,10 +1,16 @@
 # Fish Tank
 
-An 8-bit fish tank that runs as the Omarchy screensaver. It is drawn with
-half-block characters and truecolor, so a terminal cell holds two square
-pixels and the whole thing is pixel art rather than ASCII art. It takes its
-colours from the Omarchy theme you are running, spreads one ocean across your
-monitors, and can be fed.
+An 8-bit fish tank for when you walk away. It is drawn with half-block
+characters and truecolor, so a terminal cell holds two square pixels and the
+whole thing is pixel art rather than ASCII art.
+
+It wears your theme: the palette is your Omarchy theme's, so the water, the
+sand, the weeds and the fish all change when your desktop does. And it keeps
+your hours -- the tank light goes off at sunset where you are, the fish slow
+down and settle, and it comes back on at dawn.
+
+With more than one monitor it is one ocean rather than a tank per screen: a
+fish that leaves one screen arrives on the next. You can feed them.
 
 ![Fish Tank](preview.gif)
 
@@ -24,11 +30,6 @@ omarchy plugin add https://github.com/kimm-stensborg/omarchy-fishtank-screensave
 The plugin is what lets the shell start the tank and feed it; `install.sh` is
 what points Omarchy's screensaver at it. There is nothing on the bar -- a
 screensaver is not a widget.
-
-If you had an earlier version of this plugin installed, run
-`omarchy restart shell` after adding it. The shell caches what is in a
-plugin's directory, and a directory whose files have changed identity since
-it was last looked at will not load until it has another look.
 
 Omarchy keeps doing the work -- one terminal per monitor, right window class,
 the same idle timing and the same lock screen. The install only shadows the
@@ -80,7 +81,7 @@ by hand.
 | `F3` | The logo on the back wall: wordmark, lockup, mark, nothing |
 | `F4` | Feed the fish |
 | `F5` | Flip the light: dark if it is light, light if it is dark |
-| `Shift + F5` | Hand the light back to the day-and-night cycle |
+| `Shift + F5` | Hand the light back to the sun |
 | `F6` | The clock: 24-hour, 12-hour, off |
 
 - **What you pick is remembered.** It is written to
@@ -95,11 +96,14 @@ by hand.
   as one -- the near ones dart up first and the rest drift over as the food
   falls into range. Whatever reaches the sand is the crab's: it drops its
   patrol, hurries over and cleans up.
-- **Night.** Left alone, the tank has a day. Every fifteen minutes the light
-  goes out of the water, the god rays thin to one shaft of moonlight,
-  everything slows and the fish sink toward a resting spot -- and the
-  jellyfish keep their colour and pick up a faint halo, being the one thing in
-  there that makes its own light.
+- **Sunset.** The tank keeps your hours. As the sun goes down where you are,
+  the light goes out of the water over about half an hour, the god rays thin
+  to one shaft of moonlight, everything slows and the fish sink toward a
+  resting spot -- and the jellyfish keep their colour and pick up a faint
+  halo, being the one thing in there that makes its own light. At dawn it
+  comes back. Sunrise and sunset are worked out from your timezone's position
+  (`/usr/share/zoneinfo`), so there is nothing to configure and nothing to
+  look up online.
 - **The clock** sits in the top-right corner, in the tank's own pixels, dimmed
   with the light so it does not glare after dark.
 - **The keys announce themselves** the first few times the tank runs -- a line
@@ -160,7 +164,7 @@ printf -- '--font-size 10\n--logo lockup\n' > ~/.config/fishtank.conf
 | `--font-size` | Terminal font size for the screensaver, default 12. Omarchy uses 18, which leaves the tank about 96x60 pixels on a scaled laptop panel; 10 is finer and costs more. Foot and Alacritty only -- Ghostty and Kitty take their size on the command line, where the launcher sets it. |
 | `--theme` | Omarchy theme to paint the tank from; the one in use by default, or name one. |
 | `--no-theme` | The built-in aquarium palette instead. |
-| `--night` | Hold the light at a level from 0 to 1 instead of cycling. |
+| `--night` | Hold the light at a level from 0 to 1 instead of following the sun. |
 | `--no-night` | Keep the lights on. |
 | `--clock` | `--clock`, `--clock 12` or `--no-clock`. |
 | `--logo` | `wordmark` (default), `lockup`, `mark`, a path to your own text art, or `none`. |

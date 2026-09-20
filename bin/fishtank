@@ -1311,28 +1311,124 @@ class Traveller:
 
 # ------------------------------------------------------------------- night ---
 
-# A full day in the tank, in seconds: day, dusk, night, dawn.
-NIGHT_PERIOD = 900.0
-NIGHT_MARKS = (0.40, 0.50, 0.90)
-
-
-def night_level(elapsed, period=NIGHT_PERIOD):
-    """How far into the night the tank is, 0 (day) to 1 (dark)."""
-    day_end, dusk_end, night_end = NIGHT_MARKS
-    phase = (elapsed % period) / period
-
-    if phase < day_end:
-        return 0.0
-    if phase < dusk_end:
-        return ease((phase - day_end) / (dusk_end - day_end))
-    if phase < night_end:
-        return 1.0
-    return 1.0 - ease((phase - night_end) / (1.0 - night_end))
-
-
+# Where the sun is, for the tank's light. The timezone database knows roughly
+# where its zones are, which is close enough for a sunset: a degree of
+# longitude is four minutes.
 def ease(t):
     t = clamp(t, 0.0, 1.0)
     return t * t * (3 - 2 * t)
+
+
+ZONE_TABS = ("/usr/share/zoneinfo/zone1970.tab", "/usr/share/zoneinfo/zone.tab")
+DEFAULT_SUN = (7.0, 21.0)          # when the sky is a mystery
+TWILIGHT = 0.6                     # hours of dusk, and of dawn
+
+
+def local_zone():
+    zone = os.environ.get("TZ", "").lstrip(":")
+    if zone:
+        return zone
+    try:
+        path = os.path.realpath("/etc/localtime")
+    except OSError:
+        return None
+    marker = "/zoneinfo/"
+    return path.split(marker, 1)[1] if marker in path else None
+
+
+def parse_coordinates(text):
+    """ISO 6709 as the zone tables write it: +5540+01235."""
+    import re
+    match = re.match(r"([+-]\d{2})(\d{2})(\d{2})?([+-]\d{3})(\d{2})(\d{2})?$", text)
+    if not match:
+        return None
+    lat_d, lat_m, lat_s, lon_d, lon_m, lon_s = match.groups()
+
+    def degrees(d, m, sec):
+        value = abs(int(d)) + int(m) / 60.0 + (int(sec) / 3600.0 if sec else 0.0)
+        return -value if d.startswith("-") else value
+
+    return degrees(lat_d, lat_m, lat_s), degrees(lon_d, lon_m, lon_s)
+
+
+def local_coordinates():
+    """Roughly where this machine is, from its timezone, or None."""
+    zone = local_zone()
+    if not zone:
+        return None
+    for tab in ZONE_TABS:
+        try:
+            with open(tab, encoding="utf-8") as fh:
+                for line in fh:
+                    if line.startswith("#"):
+                        continue
+                    fields = line.rstrip("\n").split("\t")
+                    if len(fields) >= 3 and fields[2] == zone:
+                        return parse_coordinates(fields[1])
+        except OSError:
+            continue
+    return None
+
+
+def sun_times(lat, lon, when):
+    """Sunrise and sunset in local hours for that day, NOAA's arithmetic.
+
+    Returns None through a polar night or a midnight sun, when there is no
+    sunset to follow.
+    """
+    day = when.tm_yday
+    gamma = 2 * math.pi / 365.0 * (day - 1 + (when.tm_hour - 12) / 24.0)
+    eqtime = 229.18 * (0.000075 + 0.001868 * math.cos(gamma)
+                       - 0.032077 * math.sin(gamma)
+                       - 0.014615 * math.cos(2 * gamma)
+                       - 0.040849 * math.sin(2 * gamma))
+    decl = (0.006918 - 0.399912 * math.cos(gamma) + 0.070257 * math.sin(gamma)
+            - 0.006758 * math.cos(2 * gamma) + 0.000907 * math.sin(2 * gamma)
+            - 0.002697 * math.cos(3 * gamma) + 0.00148 * math.sin(3 * gamma))
+    rad = math.radians(lat)
+    cos_ha = (math.cos(math.radians(90.833)) / (math.cos(rad) * math.cos(decl))
+              - math.tan(rad) * math.tan(decl))
+    if cos_ha > 1 or cos_ha < -1:
+        return None
+    ha = math.degrees(math.acos(cos_ha))
+    offset = when.tm_gmtoff / 60.0 if when.tm_gmtoff is not None else 0.0
+    sunrise = (720 - 4 * (lon + ha) - eqtime + offset) / 60.0
+    sunset = (720 - 4 * (lon - ha) - eqtime + offset) / 60.0
+    return sunrise % 24, sunset % 24
+
+
+SUN_CACHE = {"day": None, "times": None}
+
+
+def todays_sun(when=None):
+    """When the sun comes up and goes down here, worked out once a day."""
+    when = when or time.localtime()
+    if SUN_CACHE["day"] != when.tm_yday:
+        coords = local_coordinates()
+        times = sun_times(coords[0], coords[1], when) if coords else None
+        SUN_CACHE["day"] = when.tm_yday
+        SUN_CACHE["times"] = times or DEFAULT_SUN
+    return SUN_CACHE["times"]
+
+
+def night_level(when=None):
+    """How dark the tank should be: 0 in daylight, 1 after dark, easing
+    across dusk and dawn the way the sky does."""
+    when = when or time.localtime()
+    sunrise, sunset = todays_sun(when)
+    hour = when.tm_hour + when.tm_min / 60.0 + when.tm_sec / 3600.0
+
+    if sunrise == sunset:
+        return 0.0
+    # Twilight straddles the event, so the tank is half dark at sunset itself.
+    into_dawn = (hour - (sunrise - TWILIGHT / 2)) % 24
+    into_dusk = (hour - (sunset - TWILIGHT / 2)) % 24
+    daylight = (sunset - sunrise) % 24
+    if into_dawn < TWILIGHT:
+        return 1.0 - ease(into_dawn / TWILIGHT)
+    if into_dusk < TWILIGHT:
+        return ease(into_dusk / TWILIGHT)
+    return 0.0 if into_dawn < daylight else 1.0
 
 
 def night_colour():
@@ -2070,8 +2166,8 @@ class Tank:
         self._day_decor = None
         self._day_logo = None
         self.bake_layers()
-        self.night_mode = getattr(opts, "night", "cycle")
-        if self.night_mode != "cycle":
+        self.night_mode = getattr(opts, "night", "sun")
+        if self.night_mode != "sun":
             self.set_night(clamp(float(self.night_mode), 0.0, 1.0))
 
     # -- static scenery -----------------------------------------------------
@@ -2301,7 +2397,7 @@ class Tank:
     def set_night_mode(self, mode):
         """day, night, or the cycle between them."""
         self.night_mode = mode
-        if mode == "cycle":
+        if mode == "sun":
             self._night_step = -1          # recomputed on the next tick
         else:
             self.set_night(clamp(float(mode), 0.0, 1.0))
@@ -2411,8 +2507,8 @@ class Tank:
     def update(self, dt, now):
         self.t += dt
 
-        if self.night_mode == "cycle":
-            level = night_level(self.t)
+        if self.night_mode == "sun":
+            level = night_level()
             # Quantised: re-tinting on every frame would cost more than the
             # rest of the drawing put together.
             step = int(round(level * 24))
@@ -2832,10 +2928,10 @@ def main():
     ap.add_argument("--no-ocean", dest="ocean", action="store_false",
                     help="keep this screen's fish to itself instead of "
                          "sharing one ocean across the monitors")
-    ap.add_argument("--night", nargs="?", const="cycle", default=None,
+    ap.add_argument("--night", nargs="?", const="sun", default=None,
                     metavar="LEVEL",
-                    help="the tank dims and settles for part of every 15 "
-                         "minutes; give a level 0-1 to hold it there")
+                    help="the tank's light follows the sun where you are; "
+                         "give a level 0-1 to hold it there instead")
     ap.add_argument("--no-night", dest="night", action="store_const", const=0.0,
                     help="keep the lights on")
     ap.add_argument("--logo", default=None, metavar="WHAT",
@@ -2883,12 +2979,12 @@ def main():
     if clock_hours not in (0, 12, 24):
         clock_hours = 0
 
-    night_choice = opts.night if night_asked else saved.get("night", "cycle")
-    if night_choice != "cycle":
+    night_choice = opts.night if night_asked else saved.get("night", "sun")
+    if night_choice != "sun":
         try:
             night_choice = clamp(float(night_choice), 0.0, 1.0)
         except (TypeError, ValueError):
-            night_choice = "cycle"
+            night_choice = "sun"
     opts.night = night_choice
     choice = opts.theme or saved.get("theme") or "current"
     opts.logo = opts.logo or saved.get("logo") or "wordmark"
@@ -3082,9 +3178,9 @@ def main():
                     label = {0: "no clock", 24: "clock 24h",
                              12: "clock 12h"}[clock_hours]
                 elif key in (5, 15):                   # F5: the light
-                    if key == 15:                      # shift: back to the cycle
-                        night_choice = "cycle"
-                        label = "day & night"
+                    if key == 15:                      # shift: follow the sun
+                        night_choice = "sun"
+                        label = "follows the sun"
                     else:
                         # Flip what is on screen now, rather than stepping
                         # through modes: pressing this should always change

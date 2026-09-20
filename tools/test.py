@@ -88,6 +88,49 @@ for cols, rows in SIZES:
     except Exception as error:                      # noqa: BLE001
         check("draws %dx%d" % (cols, rows), False, repr(error))
 
+# -- the light follows the sun -----------------------------------------------
+
+
+class FakeClock:
+    def __init__(self, hour, minute=0, yday=263, gmtoff=7200):
+        self.tm_hour, self.tm_min, self.tm_sec = hour, minute, 0
+        self.tm_yday, self.tm_gmtoff = yday, gmtoff
+
+
+coords = ft.local_coordinates()
+check("the timezone says roughly where we are", coords is not None, str(coords))
+if coords:
+    lat, lon = coords
+    check("the latitude is a latitude", -90 <= lat <= 90)
+    check("the longitude is a longitude", -180 <= lon <= 180)
+
+sunrise, sunset = ft.todays_sun()
+check("the sun comes up in the morning", 2 <= sunrise <= 11, "%.2f" % sunrise)
+check("and goes down in the evening", 14 <= sunset <= 23, "%.2f" % sunset)
+check("with daylight in between", sunset > sunrise)
+
+ft.SUN_CACHE["day"] = None
+for hour, want, what in ((12, 0.0, "noon is bright"),
+                         (2, 1.0, "the small hours are dark")):
+    ft.SUN_CACHE["day"] = None
+    level = ft.night_level(FakeClock(hour))
+    check(what, abs(level - want) < 0.01, "%.2f at %02d:00" % (level, hour))
+
+ft.SUN_CACHE["day"] = None
+at_sunset = ft.night_level(FakeClock(int(sunset), int((sunset % 1) * 60)))
+check("sunset itself is halfway dark", 0.3 < at_sunset < 0.7, "%.2f" % at_sunset)
+ft.SUN_CACHE["day"] = None
+at_sunrise = ft.night_level(FakeClock(int(sunrise), int((sunrise % 1) * 60)))
+check("sunrise itself is halfway dark", 0.3 < at_sunrise < 0.7, "%.2f" % at_sunrise)
+
+# Somewhere it never sets in June, and never rises in December.
+polar = ft.sun_times(78.0, 15.0, FakeClock(12, yday=172))
+check("a midnight sun has no sunset", polar is None)
+ft.SUN_CACHE["day"] = None
+
+check("a machine with no idea where it is still has a night",
+      ft.DEFAULT_SUN[0] < ft.DEFAULT_SUN[1])
+
 # -- after dark, at every size -----------------------------------------------
 
 for cols, rows in ((96, 30), (320, 81)):
@@ -412,8 +455,8 @@ def press_f5(mode, lit_now):
 
 for mode, lit, want in ((0.0, 0.0, 1.0),        # sitting in daylight -> night
                         (1.0, 1.0, 0.0),        # sitting in night -> daylight
-                        ("cycle", 0.0, 1.0),    # cycling, currently day -> night
-                        ("cycle", 1.0, 0.0)):   # cycling, currently night -> day
+                        ("sun", 0.0, 1.0),      # following the sun, in day -> night
+                        ("sun", 1.0, 0.0)):     # following the sun, at night -> day
     check("F5 from %r at light %.0f gives %r" % (mode, lit, want),
           press_f5(mode, lit) == want)
 
