@@ -605,6 +605,19 @@ check("the entry point exists", entry and os.path.exists(os.path.join(ROOT, entr
 with open(os.path.join(ROOT, manifest["entryPoints"]["service"]), encoding="utf-8") as fh:
     service = fh.read()
 check("the service answers to the plugin id", manifest["id"] in service)
+
+# The manifest version drifted behind the releases once; it is what the shell
+# reports, so it must never be older than the newest tag.
+tags = subprocess.run(["git", "-C", ROOT, "tag", "--list", "v*"],
+                      capture_output=True, text=True)
+if tags.returncode == 0 and tags.stdout.strip():
+    def parts(text):
+        return tuple(int(n) for n in text.lstrip("v").split(".")[:3])
+    newest = max(parts(t) for t in tags.stdout.split())
+    check("the manifest version keeps up with the tags",
+          parts(manifest["version"]) >= newest,
+          "manifest %s, newest tag v%s" % (manifest["version"],
+                                           ".".join(str(n) for n in newest)))
 for call in ("function open()", "function feed()", "function stop()"):
     check("the service offers %s" % call.split()[1], call in service)
 
