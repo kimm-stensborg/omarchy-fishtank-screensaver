@@ -8,6 +8,8 @@ monitors, and can be fed.
 
 ![Fish Tank](preview.gif)
 
+- **Plugin ID:** `io.github.kimm-stensborg.fishtank`
+- **Kind:** service
 - **License:** MIT
 - **Requires:** Omarchy 4 (Quattro), Python 3, and one of Alacritty, Foot,
   Ghostty or Kitty
@@ -15,10 +17,13 @@ monitors, and can be fed.
 ## Install
 
 ```bash
-git clone https://github.com/kimm-stensborg/omarchy-fishtank-screensaver.git
-cd omarchy-fishtank-screensaver
-./install.sh
+omarchy plugin add https://github.com/kimm-stensborg/omarchy-fishtank-screensaver.git --enable
+~/.config/omarchy/plugins/io.github.kimm-stensborg.fishtank/install.sh
 ```
+
+The plugin is what lets the shell start the tank and feed it; `install.sh` is
+what points Omarchy's screensaver at it. There is nothing on the bar -- a
+screensaver is not a widget.
 
 Omarchy keeps doing the work -- one terminal per monitor, right window class,
 the same idle timing and the same lock screen. The install only shadows the
@@ -41,6 +46,20 @@ Try it with **Omarchy menu → System → Screensaver**, or:
 ```bash
 omarchy-launch-screensaver force   # the real thing, any key exits
 fishtank                           # just the tank, Ctrl-C exits
+```
+
+The shell can drive it too, which is what the plugin is for:
+
+```bash
+omarchy-shell io.github.kimm-stensborg.fishtank open    # dive in now
+omarchy-shell io.github.kimm-stensborg.fishtank feed    # food, every monitor
+omarchy-shell io.github.kimm-stensborg.fishtank stop    # back to work
+```
+
+To feed the fish with a shortcut, add this to `~/.config/hypr/bindings.lua`:
+
+```lua
+o.bind("SUPER + CTRL + F", "Feed the fish", "omarchy-shell io.github.kimm-stensborg.fishtank feed")
 ```
 
 ## Use
@@ -152,12 +171,21 @@ and the sand are flattened into plain writes once rather than drawn each
 frame, the logo is blended a row at a time rather than a pixel at a time, and
 the renderer sends only the rows that changed.
 
+## Update
+
+```bash
+omarchy plugin update io.github.kimm-stensborg.fishtank
+```
+
 ## Uninstall
 
 ```bash
-./uninstall.sh            # back to the stock Omarchy screensaver
-./uninstall.sh --purge    # and delete ~/.config/fishtank.conf too
+~/.config/omarchy/plugins/io.github.kimm-stensborg.fishtank/uninstall.sh
+omarchy plugin remove io.github.kimm-stensborg.fishtank
 ```
+
+`uninstall.sh` hands the screensaver back to Omarchy; removing the plugin
+takes the rest. `--purge` deletes `~/.config/fishtank.conf` as well.
 
 It removes the symlinks and the saved state, then prints what
 `omarchy-launch-screensaver` will find from now on. It only deletes symlinks

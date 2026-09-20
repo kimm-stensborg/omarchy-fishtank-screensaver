@@ -491,6 +491,29 @@ with tempfile.TemporaryDirectory() as tmp:
         check("the request is recent", abs(saved.get("feed", 0) - time.time()) < 30)
         check("--feed keeps the rest of the state", "feed" in saved)
 
+# -- the plugin contract -----------------------------------------------------
+
+with open(os.path.join(ROOT, "manifest.json"), encoding="utf-8") as fh:
+    manifest = json.load(fh)
+check("manifest is schema 1", manifest.get("schemaVersion") == 1)
+check("manifest has a reverse-domain id", manifest.get("id", "").count(".") >= 2)
+check("it is a service, not a widget", manifest.get("kinds") == ["service"])
+entry = manifest.get("entryPoints", {}).get("service")
+check("the service has an entry point", bool(entry))
+check("the entry point exists", entry and os.path.exists(os.path.join(ROOT, entry)))
+with open(os.path.join(ROOT, "Service.qml"), encoding="utf-8") as fh:
+    service = fh.read()
+check("the service answers to the plugin id", manifest["id"] in service)
+for call in ("function open()", "function feed()", "function stop()"):
+    check("the service offers %s" % call.split()[1], call in service)
+
+if not QUICK:
+    done = subprocess.run(["omarchy", "plugin", "validate", ROOT],
+                          capture_output=True, text=True)
+    if done.returncode != 127 and "not found" not in done.stderr:
+        check("omarchy accepts the plugin", done.returncode == 0,
+              done.stdout + done.stderr)
+
 # -- shell scripts parse -----------------------------------------------------
 
 for script in ("install.sh", "uninstall.sh", "bin/omarchy-screensaver",
