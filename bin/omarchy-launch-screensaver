@@ -20,7 +20,20 @@
 set -euo pipefail
 
 OMARCHY_PATH="${OMARCHY_PATH:-/usr/share/omarchy}"
-REAL="$OMARCHY_PATH/bin/omarchy-launch-screensaver"
+
+# Omarchy ships the launcher in both places depending on how it was
+# installed. Never pick ourselves, whichever directory we were linked into.
+self="$(readlink -f "$0")"
+REAL=""
+for candidate in "$OMARCHY_PATH/bin/omarchy-launch-screensaver" \
+  /usr/bin/omarchy-launch-screensaver \
+  /usr/share/omarchy/bin/omarchy-launch-screensaver; do
+  if [[ -x $candidate && $(readlink -f "$candidate") != "$self" ]]; then
+    REAL="$candidate"
+    break
+  fi
+done
+
 CONFIG="${FISHTANK_CONFIG:-$HOME/.config/fishtank.conf}"
 DEFAULT_SIZE=12
 

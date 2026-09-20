@@ -127,13 +127,32 @@ cd omarchy-fishtank-screensaver
 ```
 
 That symlinks `bin/fishtank`, `bin/omarchy-screensaver` and
-`bin/omarchy-launch-screensaver` into `~/.local/bin`,
-which sits ahead of `/usr/share/omarchy/bin` on `PATH`. Omarchy's own
-`omarchy-launch-screensaver` keeps doing the work — one terminal per monitor,
-right font, right window class — it just finds this `omarchy-screensaver`
-first. Nothing under `/usr/share/omarchy` is touched, so an `omarchy update`
-will not fight with it, and `./uninstall.sh` hands the screensaver straight
-back to stock.
+`bin/omarchy-launch-screensaver` onto a directory that comes earlier on `PATH`
+than Omarchy's own copies, so the menu item and the shell's idle service both
+find these first. Omarchy keeps doing the work -- one terminal per monitor,
+right window class -- it just runs a fish tank in them.
+
+Which directory that is depends on the machine, and `install.sh` works it out:
+
+- Omarchy ships its commands as `/usr/bin/omarchy-*` and only *appends*
+  `~/.local/bin` to `PATH`, so on a stock install a symlink there is never
+  reached. Then `/usr/local/bin` is used instead, which needs `sudo`.
+- If you prepend `~/.local/bin` yourself, no root is needed and that is used.
+
+`--user` and `--system` force either. Whichever it picks, it finishes by
+printing what `omarchy-launch-screensaver` now resolves to from both the login
+shell (where the menu runs it) and the Wayland session (where the idle service
+does), and fails loudly rather than leaving you with symlinks that are never
+reached:
+
+```
+  login: /usr/local/bin/omarchy-launch-screensaver  (the fish tank)
+  session: /usr/local/bin/omarchy-launch-screensaver  (the fish tank)
+```
+
+Nothing under `/usr/share/omarchy` is touched, so an `omarchy update` will not
+fight with it, and `./uninstall.sh` hands the screensaver straight back to
+stock.
 
 Omarchy has no channel of its own for sharing screensavers: officially you
 swap the ASCII art (`omarchy branding screensaver`), and the shell's plugin
@@ -163,6 +182,9 @@ assumed, which all four do.
 ./uninstall.sh            # back to the stock Omarchy screensaver
 ./uninstall.sh --purge    # and delete ~/.config/fishtank.conf too
 ```
+
+It cleans both `~/.local/bin` and `/usr/local/bin` (asking for `sudo` only if
+there is something of ours in the latter).
 
 It removes the two symlinks and the saved F-key state, then checks what
 `omarchy-launch-screensaver` will find from now on and prints it, exiting
