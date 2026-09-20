@@ -376,7 +376,103 @@ if straddling:
     check("a piece on the join is on both screens", bool(twin),
           "left at %d, right has %s" % (x, [x2 for _, x2, _ in right.decor]))
 
-# -- the clock ---# -- the clock ---------------------------------------------------------------
+# -- the surface -------------------------------------------------------------
+
+surface = Opts()
+surface.night = 0.0
+random.seed(11)
+tank = ft.Tank(320, 81, surface)
+buf = [0] * (320 * 81 * 2)
+now = 1000.0
+for _ in range(30):
+    now += 1 / 24.0
+    tank.update(1 / 24.0, now)
+
+check("no rings until something pops", not tank.ripples)
+tank.bubbles.append(ft.Bubble(tank, 160, 3, size=2))
+for _ in range(12):
+    now += 1 / 24.0
+    tank.update(1 / 24.0, now)
+check("a bubble reaching the top leaves a ring", len(tank.ripples) == 1)
+
+tank.draw(buf)
+check("the surface stays inside the tank",
+      all(0 <= v <= 0xFFFFFF for v in buf))
+
+# The ring lifts the swell where it passes, rather than being painted on.
+ring_x = int(tank.ripples[0][0])
+before = [buf[y * tank.w + ring_x] for y in range(6)]
+for _ in range(10):
+    now += 1 / 24.0
+    tank.update(1 / 24.0, now)
+tank.draw(buf)
+after = [buf[y * tank.w + ring_x] for y in range(6)]
+check("the surface moves while a ring passes", before != after)
+
+for _ in range(int(24 * (ft.RIPPLE_LIFE + 0.5))):
+    now += 1 / 24.0
+    tank.update(1 / 24.0, now)
+check("rings do not pile up", not tank.ripples, "%d left" % len(tank.ripples))
+
+dark_tank = Opts()
+dark_tank.night = 1.0
+random.seed(11)
+night_side = ft.Tank(120, 40, dark_tank)
+night_buf = [0] * (120 * 40 * 2)
+night_side.update(1 / 24.0, 1000.0)
+night_side.draw(night_buf)
+lit_rows = sum(1 for v in night_buf[:120 * 3] if sum(ft.unpack(v)) > 330)
+check("the surface does not glare after dark", lit_rows == 0, "%d bright" % lit_rows)
+
+# -- the clock ---# -- the surface -------------------------------------------------------------
+
+surface = Opts()
+surface.night = 0.0
+random.seed(11)
+tank = ft.Tank(320, 81, surface)
+buf = [0] * (320 * 81 * 2)
+now = 1000.0
+for _ in range(30):
+    now += 1 / 24.0
+    tank.update(1 / 24.0, now)
+
+check("no rings until something pops", not tank.ripples)
+tank.bubbles.append(ft.Bubble(tank, 160, 3, size=2))
+for _ in range(12):
+    now += 1 / 24.0
+    tank.update(1 / 24.0, now)
+check("a bubble reaching the top leaves a ring", len(tank.ripples) == 1)
+
+tank.draw(buf)
+check("the surface stays inside the tank",
+      all(0 <= v <= 0xFFFFFF for v in buf))
+
+# The ring lifts the swell where it passes, rather than being painted on.
+ring_x = int(tank.ripples[0][0])
+before = [buf[y * tank.w + ring_x] for y in range(6)]
+for _ in range(10):
+    now += 1 / 24.0
+    tank.update(1 / 24.0, now)
+tank.draw(buf)
+after = [buf[y * tank.w + ring_x] for y in range(6)]
+check("the surface moves while a ring passes", before != after)
+
+for _ in range(int(24 * (ft.RIPPLE_LIFE + 0.5))):
+    now += 1 / 24.0
+    tank.update(1 / 24.0, now)
+check("rings do not pile up", not tank.ripples, "%d left" % len(tank.ripples))
+
+dark_tank = Opts()
+dark_tank.night = 1.0
+random.seed(11)
+night_side = ft.Tank(120, 40, dark_tank)
+night_buf = [0] * (120 * 40 * 2)
+night_side.update(1 / 24.0, 1000.0)
+night_side.draw(night_buf)
+lit_rows = sum(1 for v in night_buf[:120 * 3] if sum(ft.unpack(v)) > 330)
+check("the surface does not glare after dark", lit_rows == 0, "%d bright" % lit_rows)
+
+# -- the clock ---------------------------------------------------------------
 
 for cols, rows in ((96, 30), (320, 81)):
     for hours in (12, 24):

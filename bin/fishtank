@@ -1309,6 +1309,9 @@ class Traveller:
         self.tank.blit(buf, frames[self.frame], int(self.x), int(self.y))
 
 
+RIPPLE_LIFE = 2.2          # seconds a ring takes to spread out and go
+
+
 # ------------------------------------------------------------------- night ---
 
 # Where the sun is, for the tank's light. The timezone database knows roughly
@@ -2006,6 +2009,7 @@ class Bubble:
         self.x += math.sin(self.phase) * 5.0 * dt
         if self.y < 1:
             self.dead = True
+            self.tank.ripples.append((self.x, self.tank.t))
 
     def draw(self, buf):
         x, y, s = int(self.x), int(self.y), self.size * self.tank.unit
@@ -2139,6 +2143,7 @@ class Tank:
 
         self.bubbles = []
         self.flakes = []
+        self.ripples = []
         self.actors = []
         self.schools = []
 
@@ -2609,6 +2614,8 @@ class Tank:
         for b in self.bubbles:
             b.update(dt, now)
         self.bubbles = [b for b in self.bubbles if not b.dead][-400:]
+        self.ripples = [r for r in self.ripples
+                        if self.t - r[1] < RIPPLE_LIFE][-40:]
 
         # Sand vents and the treasure chest puff bubbles now and then.
         if now > self.vent_at:
@@ -2682,14 +2689,75 @@ class Tank:
             col = ((c >> 16) & 255, (c >> 8) & 255, c & 255)
             buf[idx] = pack(mix(col, SURFACE, 0.35 * (1.0 - 0.6 * self.night)))
 
-        # Surface line, dimmed after dark.
+        # The surface: a swell made of two waves that do not share a period,
+        # the light broken up underneath it, and rings where something has
+        # come up and popped.
         lit = 1.0 - 0.75 * self.night
-        top = pack(mix(night_colour(), SURFACE, lit))
-        under = pack(mix(night_colour(), mix(SURFACE, WATER_TOP, 0.35), lit))
+        dark = night_colour()
+        crest = pack(mix(dark, mix(SURFACE, (255, 255, 255), 0.35), lit))
+        skin = pack(mix(dark, SURFACE, lit))
+        under = pack(mix(dark, mix(SURFACE, WATER_TOP, 0.45), lit))
+        glare = mix(SURFACE, (255, 255, 255), 0.4)
+        glare_r, glare_g, glare_b = glare
+        band = max(4, int(h * 0.08))
+
+        # The caustics are three sine terms over x and depth, which is ten
+        # thousand calls to sin() a frame if taken literally. Each term is
+        # sin(a + b) with a depending on x and b on depth, so the angle sum
+        # identity turns it into a few hundred.
+        depth_cos = [math.cos(d * 0.55) for d in range(band)]
+        depth_sin = [math.sin(d * 0.55) for d in range(band)]
+        deep_cos = [math.cos(-d * 0.3) for d in range(band)]
+        deep_sin = [math.sin(-d * 0.3) for d in range(band)]
+
+        # Where a bubble has come up, the swell itself lifts as the ring
+        # passes -- drawing a separate bright ring on an already bright
+        # surface shows nothing at all.
+        rings = []
+        for spot, born in self.ripples:
+            age = t - born
+            fade = 1.0 - age / RIPPLE_LIFE
+            if 0 <= age and fade > 0:
+                rings.append((spot, age * 17.0, fade))
+
         for x in range(w):
-            y = int(1 + (math.sin(x * 0.22 + t * 1.6) + 1) * 0.9)
-            self.px(buf, x, y, under)
-            self.px(buf, x, max(0, y - 1), top)
+            swell = (math.sin(x * 0.22 + t * 1.6)
+                     + math.sin(x * 0.079 - t * 0.9) * 0.8)
+            lift = 0.0
+            for spot, radius, fade in rings:
+                edge = abs(abs(x - spot) - radius)
+                if edge < 3.0:
+                    lift = max(lift, (1.0 - edge / 3.0) * fade)
+            swell -= lift * 3.2
+            y = int(round(1 + (swell + 1.8) * 0.8))
+            self.px(buf, x, max(0, y - 1),
+                    pack(mix(unpack(crest), glare, lift * 0.8)) if lift else crest)
+            self.px(buf, x, y, skin)
+            self.px(buf, x, y + 1, under)
+            # Light through the swell: not a line of dashes but a soft
+            # brightness that drifts along and fades as the water deepens.
+            a1 = x * 0.31 - t * 2.2
+            a2 = x * 0.61 + t * 0.7
+            s1, c1 = math.sin(a1), math.cos(a1)
+            s2, c2 = math.sin(a2), math.cos(a2)
+            flat = math.sin(x * 0.13 + t * 1.1)
+            for d in range(2, band):
+                shimmer = (s1 * depth_cos[d] + c1 * depth_sin[d]
+                           + flat
+                           + (s2 * deep_cos[d] + c2 * deep_sin[d]) * 0.6)
+                strength = (shimmer - 0.9) / 1.8
+                if strength <= 0.02:
+                    continue
+                py = y + d
+                if not 0 <= py < h:
+                    continue
+                idx = py * w + x
+                a = min(0.5, strength) * (1.0 - d / float(band)) * lit
+                c = buf[idx]
+                cr, cg, cb = (c >> 16) & 255, (c >> 8) & 255, c & 255
+                buf[idx] = ((int(cr + (glare_r - cr) * a) << 16)
+                            | (int(cg + (glare_g - cg) * a) << 8)
+                            | int(cb + (glare_b - cb) * a))
 
         # Scenery, back to front.
         for far in self.backdrop:

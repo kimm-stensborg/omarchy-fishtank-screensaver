@@ -157,6 +157,11 @@ shaft of moonlight left, and the jellyfish still glowing.*
   water in front of it empties: fish within reach bolt the other way and
   drift back once it has gone. It belongs to the screen it is on rather than
   to the ocean, so it comes and goes.
+- **A surface worth looking at.** The swell is two waves that do not share a
+  period, so it never repeats on the eye, with light broken up underneath it
+  drifting along and fading as the water deepens. A bubble that reaches the
+  top lifts the swell into a ring that spreads and dies away -- the surface
+  moves, rather than having a ring drawn on it.
 - **Depth.** Shapes too far away to have colour drift along the back wall, and
   a few fronds close to the glass pass in front of everything.
 - **The Omarchy logo**, etched into the back wall from `logo.txt`, catching a
