@@ -1235,6 +1235,23 @@ class Fish:
             self.frame_t -= 1.0
             self.frame = (self.frame + 1) % 4
 
+    def stay_home(self):
+        """Turn back at the glass.
+
+        Something leaving the screen should mean it has gone to the next
+        monitor, so when this tank is part of an ocean its own fish stay in
+        it and the travelling ones do all the crossing. Applied by the tank
+        rather than inside update(), because a fish that is shoaling or
+        chasing food never reaches the end of update().
+        """
+        edge = self.tank.w - self.w - 1
+        if self.x < 1:
+            self.x = 1
+            self.dir = 1
+        elif self.x > edge:
+            self.x = max(1, edge)
+            self.dir = -1
+
     def keep_clear(self):
         """Nothing swims through the castle."""
         box = self.tank.castle_box
@@ -1288,16 +1305,7 @@ class Fish:
                                             size=1, depth=self.depth))
 
         if self.tank.world:
-            # Something leaving the screen should mean it has gone to the next
-            # monitor. So when the tank is part of an ocean, the fish that
-            # belong to this screen turn back at the glass and the travelling
-            # ones do all the crossing.
-            if self.x < 1:
-                self.x = 1
-                self.dir = 1
-            elif self.x > self.tank.w - self.w - 1:
-                self.x = self.tank.w - self.w - 1
-                self.dir = -1
+            pass                       # the tank keeps them in, see stay_home
         elif self.x < -self.w - 4:
             self.x = self.tank.w + 2
         elif self.x > self.tank.w + 4:
@@ -1328,6 +1336,13 @@ class School:
         self.phase += dt * 0.8
         self.y += math.sin(self.phase) * 2.2 * dt
         self.y = clamp(self.y, 3, self.tank.floor * 0.85)
+        if self.tank.world:
+            if self.x < self.tank.w * 0.15:
+                self.x = self.tank.w * 0.15
+                self.dir = 1
+            elif self.x > self.tank.w * 0.85:
+                self.x = self.tank.w * 0.85
+                self.dir = -1
         if now > self.turn_at and 4 < self.x < self.tank.w - 4:
             self.dir *= -1 if random.random() < 0.5 else 1
             self.turn_at = now + random.uniform(6, 18)
@@ -2097,6 +2112,10 @@ class Tank:
             far.update(dt_actors, now)
         for passer in self.travellers:
             passer.update(dt, now)
+        if self.world:
+            for actor in self.actors:
+                if isinstance(actor, Fish):
+                    actor.stay_home()
         for flake in self.flakes:
             flake.update(dt, now)
         self.flakes = [f for f in self.flakes if not f.dead]

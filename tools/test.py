@@ -162,7 +162,7 @@ try:
         check("screens agree where a travelling fish is", spread < 40,
               "%.0f layout px apart" % spread)
 
-            # With an ocean, the local fish turn back at the glass: anything
+        # With an ocean, the local fish turn back at the glass: anything
         # leaving the screen has genuinely gone to the next monitor.
         strays = []
         for name, tank in screens.items():
@@ -173,7 +173,7 @@ try:
         check("local fish stay on their own screen", not strays,
               "%d wandered off" % len(strays))
 
-    seen = [name for name, tank in screens.items()
+        seen = [name for name, tank in screens.items()
                 if -tank.travellers[0].w < tank.travellers[0].x < tank.w]
         check("a travelling fish is on some screen", len(seen) >= 1, str(seen))
 
