@@ -107,6 +107,68 @@ for cols, rows in ((160, 45), (320, 81)):
     check("%dx%d has a far layer" % (cols, rows), len(tank.backdrop) > 0)
     check("%dx%d has fronds up front" % (cols, rows), len(tank.front_weeds) > 0)
 
+# -- one ocean across several monitors --------------------------------------
+
+SCREENS = (("left", 0, 2560, 1440, 320, 81),
+           ("middle", 2560, 2560, 1440, 320, 81),
+           ("right", 5120, 1536, 960, 192, 60))
+WORLD_W = 6656
+
+
+def build_screen(offset, width, height, cols, rows):
+    os.environ["FISHTANK_WORLD"] = "%d,%d,%d,%d" % (WORLD_W, offset, width, height)
+    opts = Opts()
+    opts.night = 0.0
+    random.seed(5)
+    return ft.Tank(cols, rows, opts)
+
+
+try:
+    screens = {name: build_screen(*rest) for name, *rest in
+               ((s[0], s[1], s[2], s[3], s[4], s[5]) for s in SCREENS)}
+    check("the ocean is picked up", all(t.world for t in screens.values()))
+    check("every screen agrees how many fish are in the ocean",
+          len({len(t.travellers) for t in screens.values()}) == 1)
+
+    # The same fish, at the same moment, must be in one place in the world.
+    clock = 1_000_000.0
+    real_time = ft.time.time
+    ft.time.time = lambda: clock
+    try:
+        for tank in screens.values():
+            for passer in tank.travellers:
+                passer.update(1 / 24.0, clock)
+        places = []
+        for name, tank in screens.items():
+            passer = tank.travellers[0]
+            offset = dict((s[0], s[1]) for s in SCREENS)[name]
+            scale = dict((s[0], s[2]) for s in SCREENS)[name] / float(tank.w)
+            places.append(offset + passer.x * scale)
+        spread = max(places) - min(places)
+        check("screens agree where a travelling fish is", spread < 40,
+              "%.0f layout px apart" % spread)
+
+        seen = [name for name, tank in screens.items()
+                if -tank.travellers[0].w < tank.travellers[0].x < tank.w]
+        check("a travelling fish is on some screen", len(seen) >= 1, str(seen))
+
+        # Rebuilding a screen must not move the ocean.
+        again = build_screen(*SCREENS[0][1:])
+        for passer in again.travellers:
+            passer.update(1 / 24.0, clock)
+        drift = abs(again.travellers[0].x - screens["left"].travellers[0].x)
+        check("the ocean is the same after a rebuild", drift < 0.001,
+              "moved %.2f" % drift)
+    finally:
+        ft.time.time = real_time
+finally:
+    os.environ.pop("FISHTANK_WORLD", None)
+
+check("a single screen is its own ocean",
+      (os.environ.update({"FISHTANK_WORLD": "2560,0,2560,1440"}) or
+       ft.world_geometry()) is None)
+os.environ.pop("FISHTANK_WORLD", None)
+
 # -- every installed theme ---------------------------------------------------
 
 themes = ft.installed_themes()

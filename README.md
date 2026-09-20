@@ -108,6 +108,23 @@ eats it and lets out a bubble. Whatever makes it to the sand is the crab's:
 it drops its patrol, hurries over and cleans up. Anything still uneaten after
 25 seconds dissolves.
 
+## One ocean
+
+With more than one monitor, the screensaver runs a tank on each -- and they
+are windows onto the same ocean. A fish that leaves the right edge of one
+screen arrives at the left edge of the next, at the moment it should, the
+right size and at the right depth.
+
+They manage it without talking to each other. Each tank works out which
+monitor it is on (its window's process, matched against Hyprland's client
+list) and where that monitor sits in the layout. The fish that travel are
+then a closed form: position is a function of the fish's number, a fixed
+seed and the wall clock, so every screen computes the same answer
+independently. Nothing is synchronised because nothing needs to be.
+
+`--no-ocean` keeps each screen's fish to itself. A single monitor is its own
+ocean and the code stays out of the way.
+
 ## Night
 
 Left alone, the tank has a day. Every fifteen minutes the light goes out of
@@ -247,6 +264,7 @@ fishtank [--theme [NAME] | --no-theme]
 
 | Flag | Meaning |
 | --- | --- |
+| `--no-ocean` | Keep this screen's fish to itself rather than sharing one ocean across monitors. |
 | `--night` | Hold the light at a level from 0 to 1 instead of cycling. |
 | `--no-night` | Keep the lights on. |
 | `--theme` | Omarchy theme to paint the tank from; the one in use by default, or name one to preview it. |
