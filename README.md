@@ -29,6 +29,10 @@ of the art put chunky pixels next to smooth ones, which reads as two
 different pictures on the same screen. One pixel size everywhere, at any
 resolution.
 
+The tank has front-to-back depth: shapes too far away to have colour drift
+across the back wall, and a few fronds close to the glass pass in front of
+everything, darker and bluer the way a near foreground goes.
+
 Swimming in the tank: generated fish species (each with a forked tail
 that flaps, a dorsal fin, a gill line and a proper eye), a pufferfish, drifting
 jellyfish, a crab that patrols the sand, bubbles from fish mouths and sand
@@ -236,6 +240,7 @@ a finer grid looks better and costs more.
 ## Development
 
 ```bash
+./test.sh [--quick]                                        # the checks
 tools/preview.py out.png [cols] [rows] [seconds] [scale]   # one frame as a PNG
 tools/sheet.py sheet.png [scale] [fish-width]              # every sprite, big
 
@@ -244,6 +249,11 @@ PREVIEW_LOGO=lockup tools/preview.py out.png                  # pick the logo
 PREVIEW_FEED=0.5 tools/preview.py out.png                     # mid-feed
 PREVIEW_LABEL="tokyo night" tools/preview.py out.png          # with the corner label
 ```
+
+`test.sh` is worth running after any change to the drawing: every case in it
+stands for something that broke once -- a theme whose colours are named after
+other colours, a canvas too small for the logo, symlinks that PATH never
+reaches, a state file left over from a previous run.
 
 The fish are generated rather than hand-drawn: `fish_art()` in `bin/fishtank`
 paints a tail fan, a teardrop body over its root, fins, a pattern (`bands`,

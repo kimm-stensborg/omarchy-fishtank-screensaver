@@ -1006,6 +1006,42 @@ class Fish:
         self.tank.blit(buf, sprite, int(self.x), int(self.y))
 
 
+class Silhouette:
+    """A fish too far back to have colour: just a shape, slightly darker than
+    the water it is swimming in. Gives the tank a back wall to have depth
+    against."""
+
+    def __init__(self, tank):
+        self.tank = tank
+        size = max(3, int(round(tank.h * 0.035)))
+        width = max(5, int(round(size / 0.44)))
+        rows, palette = fish_art(width, size, random.choice(SPECIES), 0)
+        shade_of = pack(mix(tank.water[int(tank.h * 0.4)], WATER_BOTTOM, 0.30))
+        sprite = Sprite.from_art(rows, palette)
+        flat = Sprite(sprite.w, sprite.h,
+                      [(x, y, shade_of) for x, y, _ in sprite.pixels])
+        self.right, self.left = flat, flat.mirrored()
+        self.w, self.h = flat.w, flat.h
+        self.x = random.uniform(0, max(1, tank.w - self.w))
+        self.y = random.uniform(2, max(3, tank.floor * 0.7))
+        self.dir = random.choice((-1, 1))
+        self.speed = random.uniform(1.4, 3.6)
+        self.phase = random.uniform(0, math.tau)
+
+    def update(self, dt, now):
+        self.x += self.dir * self.speed * dt
+        self.phase += dt * 0.7
+        self.y += math.sin(self.phase) * 0.5 * dt
+        if self.x < -self.w - 2:
+            self.x = self.tank.w + 2
+        elif self.x > self.tank.w + 2:
+            self.x = -self.w - 2
+
+    def draw(self, buf):
+        self.tank.blit(buf, self.right if self.dir > 0 else self.left,
+                       int(self.x), int(self.y))
+
+
 class Puffer(Fish):
     """A round little fellow who drifts rather than swims."""
 
@@ -1175,16 +1211,28 @@ class Flake:
 
 
 class Weed:
-    def __init__(self, tank, x):
+    def __init__(self, tank, x, front=False):
         self.tank = tank
         self.x = x
-        self.height = random.randint(8, max(10, int(tank.floor * 0.45)))
+        self.front = front
+        reach = 0.45 if not front else 0.85
+        self.height = random.randint(max(6, int(tank.floor * 0.18)),
+                                     max(8, int(tank.floor * reach)))
         self.phase = random.uniform(0, math.tau)
-        self.sway = random.uniform(1.2, 3.0)
-        self.width = random.choice((1, 1, 2)) * tank.unit
-        self.colour = pack(random.choice(WEED))
-        self.dark = pack(WEED[1])
-        self.tip = pack(WEED[2])
+        self.sway = random.uniform(1.2, 3.0) * (1.6 if front else 1.0)
+        self.width = random.choice((1, 1, 2)) * tank.unit + (1 if front else 0)
+        colour = random.choice(WEED)
+        if front:
+            # Close to the glass, between you and the light: darker and
+            # bluer, the way anything in the near foreground goes.
+            colour = mix(shade(colour, 0.45), WATER_BOTTOM, 0.35)
+            self.colour = pack(colour)
+            self.dark = pack(shade(colour, 0.7))
+            self.tip = pack(mix(colour, WEED[2], 0.20))
+        else:
+            self.colour = pack(colour)
+            self.dark = pack(WEED[1])
+            self.tip = pack(WEED[2])
 
     def draw(self, buf, t):
         base_y = self.tank.floor
@@ -1242,6 +1290,15 @@ class Tank:
         self.actors.sort(key=lambda a: getattr(a, "depth", 0.5))
 
         self.weeds = [Weed(self, x) for x in self._weed_positions()]
+        # Depth: a few shapes far behind everything, a few fronds close to the
+        # glass in front of it.
+        self.backdrop = [Silhouette(self)
+                         for _ in range(clamp(self.w // 45, 0, 7))]
+        self.front_weeds = []
+        for _ in range(clamp(self.w // 70, 0, 4)):
+            edge = random.choice((random.uniform(-2, self.w * 0.22),
+                                  random.uniform(self.w * 0.78, self.w + 2)))
+            self.front_weeds.append(Weed(self, int(edge), front=True))
         self.vent_at = 0.0
         self.logo = self._logo()
 
@@ -1440,6 +1497,8 @@ class Tank:
         self.t += dt
         for actor in self.actors:
             actor.update(dt, now)
+        for far in self.backdrop:
+            far.update(dt, now)
         for flake in self.flakes:
             flake.update(dt, now)
         self.flakes = [f for f in self.flakes if not f.dead]
@@ -1515,7 +1574,9 @@ class Tank:
             self.px(buf, x, y, pack(mix(SURFACE, WATER_TOP, 0.35)))
             self.px(buf, x, max(0, y - 1), pack(SURFACE))
 
-        # Scenery.
+        # Scenery, back to front.
+        for far in self.backdrop:
+            far.draw(buf)
         for weed in self.weeds:
             weed.draw(buf, t)
         for sprite, sx, sy in self.decor:
@@ -1530,6 +1591,10 @@ class Tank:
             actor.draw(buf)
         for b in self.bubbles:
             b.draw(buf)
+
+        # Closest to the glass, over everything.
+        for weed in self.front_weeds:
+            weed.draw(buf, t)
 
 
 # ------------------------------------------------------------------- state ---
