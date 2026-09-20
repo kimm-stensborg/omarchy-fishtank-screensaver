@@ -88,6 +88,19 @@ for cols, rows in SIZES:
     except Exception as error:                      # noqa: BLE001
         check("draws %dx%d" % (cols, rows), False, repr(error))
 
+# -- after dark, at every size -----------------------------------------------
+
+for cols, rows in ((96, 30), (320, 81)):
+    for level in (0.0, 0.5, 1.0):
+        opts = Opts()
+        opts.night = level
+        try:
+            tank, _ = run_tank(cols, rows, opts, frames=30, feed=True)
+            check("draws %dx%d at night %.1f" % (cols, rows, level), True)
+            check("night %.1f took" % level, abs(tank.night - level) < 0.001)
+        except Exception as error:                  # noqa: BLE001
+            check("draws %dx%d at night %.1f" % (cols, rows, level), False, repr(error))
+
 # -- the cast, and that nothing swims through the castle --------------------
 
 for cols, rows in ((160, 45), (320, 81)):
@@ -149,7 +162,18 @@ try:
         check("screens agree where a travelling fish is", spread < 40,
               "%.0f layout px apart" % spread)
 
-        seen = [name for name, tank in screens.items()
+            # With an ocean, the local fish turn back at the glass: anything
+        # leaving the screen has genuinely gone to the next monitor.
+        strays = []
+        for name, tank in screens.items():
+            for _ in range(200):
+                tank.update(1 / 24.0, clock)
+            strays += [a for a in tank.actors
+                       if isinstance(a, ft.Fish) and (a.x < -1 or a.x > tank.w)]
+        check("local fish stay on their own screen", not strays,
+              "%d wandered off" % len(strays))
+
+    seen = [name for name, tank in screens.items()
                 if -tank.travellers[0].w < tank.travellers[0].x < tank.w]
         check("a travelling fish is on some screen", len(seen) >= 1, str(seen))
 

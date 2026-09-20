@@ -1139,6 +1139,8 @@ class Fish:
     # defaults: a fish belongs to no school until one claims it.
     school = None
     slot = (0.0, 0.0)
+    # Subclasses that build themselves get no resting spot until they set one.
+    rest_y = None
 
     @staticmethod
     def tank_width_cap(tank):
@@ -1258,7 +1260,7 @@ class Fish:
         night = self.tank.night
         self.y += math.sin(self.phase) * self.bob * (1.0 - 0.7 * night) * dt \
             + self.drift * dt
-        if night > 0.35:
+        if night > 0.35 and self.rest_y is not None:
             # Sinking toward a resting spot, the way a tank goes quiet.
             self.y += (self.rest_y - self.y) * 0.25 * night * dt
         top = 1.0
@@ -1285,7 +1287,18 @@ class Fish:
             self.tank.bubbles.append(Bubble(self.tank, mx, self.y + self.h * 0.5,
                                             size=1, depth=self.depth))
 
-        if self.x < -self.w - 4:
+        if self.tank.world:
+            # Something leaving the screen should mean it has gone to the next
+            # monitor. So when the tank is part of an ocean, the fish that
+            # belong to this screen turn back at the glass and the travelling
+            # ones do all the crossing.
+            if self.x < 1:
+                self.x = 1
+                self.dir = 1
+            elif self.x > self.tank.w - self.w - 1:
+                self.x = self.tank.w - self.w - 1
+                self.dir = -1
+        elif self.x < -self.w - 4:
             self.x = self.tank.w + 2
         elif self.x > self.tank.w + 4:
             self.x = -self.w - 2
@@ -1508,6 +1521,7 @@ class Puffer(Fish):
         self.turn_at = time.monotonic() + random.uniform(10, 25)
         self.bubble_at = time.monotonic() + random.uniform(5, 15)
         self.drift = 0.0
+        self.rest_y = random.uniform(0.5, 0.85) * (tank.floor - self.h)
 
     def update(self, dt, now):
         Fish.update(self, dt, now)
@@ -1734,7 +1748,7 @@ class Tank:
         self.world = world_geometry() if getattr(opts, "ocean", True) else None
         self.travellers = []
         if self.world:
-            for index in range(int(clamp(self.world[0] / 420.0, 3, 14))):
+            for index in range(int(clamp(self.world[0] / 240.0, 6, 28))):
                 self.travellers.append(Traveller(self, index, self.world))
         count = opts.fish if opts.fish is not None else \
             clamp(int(self.w * self.h / 900), 6, 24)
@@ -1796,8 +1810,8 @@ class Tank:
         self._day_decor = None
         self._day_logo = None
         self.night_mode = getattr(opts, "night", "cycle")
-        if isinstance(self.night_mode, float):
-            self.set_night(self.night_mode)
+        if self.night_mode != "cycle":
+            self.set_night(clamp(float(self.night_mode), 0.0, 1.0))
 
     # -- static scenery -----------------------------------------------------
 
@@ -1970,6 +1984,14 @@ class Tank:
                 buf[py * w + px] = c
 
     # -- night --------------------------------------------------------------
+
+    def set_night_mode(self, mode):
+        """day, night, or the cycle between them."""
+        self.night_mode = mode
+        if mode == "cycle":
+            self._night_step = -1          # recomputed on the next tick
+        else:
+            self.set_night(clamp(float(mode), 0.0, 1.0))
 
     def set_night(self, level):
         """Take the light out of the tank, or put it back.
@@ -2329,7 +2351,8 @@ for _i, _codes in enumerate((
         (b"\x1bOP", b"\x1b[11~", b"\x1b[[A"),
         (b"\x1bOQ", b"\x1b[12~", b"\x1b[[B"),
         (b"\x1bOR", b"\x1b[13~", b"\x1b[[C"),
-        (b"\x1bOS", b"\x1b[14~", b"\x1b[[D"))):
+        (b"\x1bOS", b"\x1b[14~", b"\x1b[[D"),
+        (b"\x1b[15~", b"\x1bOt", b"\x1b[[E"))):
     for _code in _codes:
         FUNCTION_KEYS[_code] = _i + 1
 
@@ -2366,7 +2389,7 @@ def main():
     ap.add_argument("--no-ocean", dest="ocean", action="store_false",
                     help="keep this screen's fish to itself instead of "
                          "sharing one ocean across the monitors")
-    ap.add_argument("--night", nargs="?", const="cycle", default="cycle",
+    ap.add_argument("--night", nargs="?", const="cycle", default=None,
                     metavar="LEVEL",
                     help="the tank dims and settles for part of every 15 "
                          "minutes; give a level 0-1 to hold it there")
@@ -2378,6 +2401,9 @@ def main():
                          "wordmark, 'mark', a path to your own art, or 'none'")
     ap.add_argument("--logo-opacity", type=float, default=0.26,
                     help="how strongly the logo shows through (default 0.26)")
+    ap.add_argument("--debug-file", metavar="PATH", default=None,
+                    help="append a line about what this tank found, for "
+                         "working out why something did not happen")
     ap.add_argument("--feed", action="store_true",
                     help="sprinkle food into every tank that is running, "
                          "then exit")
@@ -2393,12 +2419,6 @@ def main():
         save_state(feed=time.time())
         return 0
 
-    if opts.night not in ("cycle",):
-        try:
-            opts.night = clamp(float(opts.night), 0.0, 1.0)
-        except (TypeError, ValueError):
-            opts.night = "cycle"
-
     if opts.seed is not None:
         random.seed(opts.seed)
 
@@ -2407,6 +2427,15 @@ def main():
     saved = load_state()
     asked = opts.theme is not None
     logo_asked = opts.logo is not None
+    night_asked = opts.night is not None
+
+    night_choice = opts.night if night_asked else saved.get("night", "cycle")
+    if night_choice != "cycle":
+        try:
+            night_choice = clamp(float(night_choice), 0.0, 1.0)
+        except (TypeError, ValueError):
+            night_choice = "cycle"
+    opts.night = night_choice
     choice = opts.theme or saved.get("theme") or "current"
     opts.logo = opts.logo or saved.get("logo") or "wordmark"
 
@@ -2437,7 +2466,7 @@ def main():
     # A screensaver runs one of these per monitor, and a key only reaches the
     # focused one. Following the state file keeps the other screens in step,
     # and means the choice that gets remembered is the one you last made.
-    follow_state = not asked and not logo_asked
+    follow_state = not asked and not logo_asked and not night_asked
     last_state = state_mtime()
     last_feed = load_state().get("feed") or 0
 
@@ -2481,6 +2510,15 @@ def main():
                 buf = [0] * (cols * rows * 2)
                 out.write("\033[2J")
 
+            if opts.debug_file and drawn == 0:
+                try:
+                    with open(opts.debug_file, "a", encoding="utf-8") as fh:
+                        fh.write("%s %dx%d world=%s travellers=%d\n" %
+                                 (time.strftime("%H:%M:%S"), cols, rows,
+                                  tank.world, len(tank.travellers)))
+                except OSError:
+                    pass
+
             dt = min(0.2, now - last)
             last = now
             tank.update(dt, now)
@@ -2512,6 +2550,10 @@ def main():
                         tank.logo = tank._logo()
                     # Food asked for from outside -- the bar button, or
                     # `fishtank --feed` from anywhere.
+                    want = shared.get("night", night_choice)
+                    if want != night_choice:
+                        night_choice = want
+                        tank.set_night_mode(night_choice)
                     asked_at = shared.get("feed") or 0
                     if asked_at > last_feed and time.time() - asked_at < 30:
                         last_feed = asked_at
@@ -2548,6 +2590,15 @@ def main():
                     last_state = state_mtime()
                     resized[0] = True                  # rebuild with the new palette
                     label = shown
+                elif key == 5:                         # F5: day / night / both
+                    order = ("cycle", 1.0, 0.0)
+                    where = order.index(night_choice) if night_choice in order else 0
+                    night_choice = order[(where + 1) % len(order)]
+                    tank.set_night_mode(night_choice)
+                    save_state(night=night_choice)
+                    last_state = state_mtime()
+                    label = {"cycle": "day & night", 1.0: "night",
+                             0.0: "daylight"}[night_choice]
                 elif key == 3:                         # F3: cycle the logo
                     opts.logo = logos[(logos.index(opts.logo) + 1)
                                       % len(logos)] if opts.logo in logos \
