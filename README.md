@@ -177,6 +177,19 @@ other line goes to `fishtank` as an argument.
 
 ## Install
 
+As an Omarchy plugin:
+
+```bash
+omarchy plugin add https://github.com/kimm-stensborg/omarchy-fishtank-screensaver.git --enable
+~/.config/omarchy/plugins/io.github.kimm-stensborg.fishtank/install.sh
+```
+
+That puts a fish in the bar -- click it to dive into the tank now rather than
+waiting for the idle timeout, middle-click to drop food into whatever tanks
+are already running. The `install.sh` line is what points Omarchy's
+screensaver at the tank; the widget works without it, it just has nothing to
+feed until the screensaver runs.
+
 From the AUR:
 
 ```bash
@@ -184,7 +197,7 @@ yay -S omarchy-fishtank-screensaver
 omarchy-fishtank-screensaver enable
 ```
 
-Or from a checkout:
+Or from a plain checkout:
 
 ```bash
 git clone https://github.com/kimm-stensborg/omarchy-fishtank-screensaver.git
@@ -226,14 +239,15 @@ Nothing under `/usr/share/omarchy` is touched, so an `omarchy update` will not
 fight with it, and `./uninstall.sh` hands the screensaver straight back to
 stock.
 
-Omarchy has no channel of its own for sharing screensavers: officially you
-swap the ASCII art (`omarchy branding screensaver`), and the shell's plugin
-system is for Quickshell components, which this is not. So this follows what
-other third-party screensavers do -- a git repo and an install script that
-points the screensaver at another program. Shadowing the binary on `PATH` is
-the lightest version of that: no shell plugin is cloned, no launcher is
-rewritten, and idle timing, "stay awake" and the lock screen keep working
-exactly as they were.
+Omarchy has no channel of its own for *screensavers*: officially you swap the
+ASCII art (`omarchy branding screensaver`). The plugin system is for
+Quickshell components, so the bar widget is a real plugin while the tank
+itself stays what it is -- a terminal program the screensaver runs. That is
+also what other third-party screensavers do: a git repo and an install script
+that points the screensaver at another program. Shadowing the binary on
+`PATH` is the lightest version of it -- no shell plugin is cloned, no
+launcher is rewritten, and idle timing, "stay awake" and the lock screen keep
+working exactly as they were.
 
 Try it:
 
@@ -281,6 +295,7 @@ fishtank [--theme [NAME] | --no-theme]
 
 | Flag | Meaning |
 | --- | --- |
+| `--feed` | Sprinkle food into every tank that is running, then exit. |
 | `--no-ocean` | Keep this screen's fish to itself rather than sharing one ocean across monitors. |
 | `--night` | Hold the light at a level from 0 to 1 instead of cycling. |
 | `--no-night` | Keep the lights on. |

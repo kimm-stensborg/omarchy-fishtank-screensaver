@@ -283,6 +283,30 @@ if not QUICK:
         check("uninstall removes saved state",
               not os.path.exists(os.path.join(home, "state", "fishtank")))
 
+# -- the plugin contract -----------------------------------------------------
+
+with open(os.path.join(ROOT, "manifest.json"), encoding="utf-8") as fh:
+    manifest = json.load(fh)
+check("manifest is schema 1", manifest.get("schemaVersion") == 1)
+check("manifest has an id", manifest.get("id", "").count(".") >= 2)
+for kind in manifest.get("kinds", []):
+    entry = {"bar-widget": "barWidget"}.get(kind, kind)
+    target = manifest.get("entryPoints", {}).get(entry)
+    check("kind %s has an entry point" % kind, bool(target))
+    check("entry point %s exists" % target,
+          target and os.path.exists(os.path.join(ROOT, target)))
+check("the widget names the plugin id",
+      manifest["id"] in open(os.path.join(ROOT, "BarWidget.qml"), encoding="utf-8").read())
+
+if not QUICK:
+    done = subprocess.run(["omarchy", "plugin", "validate", ROOT],
+                          capture_output=True, text=True)
+    if done.returncode == 127 or "not found" in done.stderr:
+        pass                      # no Omarchy here; nothing to validate against
+    else:
+        check("omarchy accepts the plugin", done.returncode == 0,
+              done.stdout + done.stderr)
+
 # -- shell scripts parse -----------------------------------------------------
 
 for script in ("install.sh", "uninstall.sh", "bin/omarchy-screensaver",

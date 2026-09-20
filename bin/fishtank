@@ -2378,6 +2378,9 @@ def main():
                          "wordmark, 'mark', a path to your own art, or 'none'")
     ap.add_argument("--logo-opacity", type=float, default=0.26,
                     help="how strongly the logo shows through (default 0.26)")
+    ap.add_argument("--feed", action="store_true",
+                    help="sprinkle food into every tank that is running, "
+                         "then exit")
     ap.add_argument("--frames", type=int, default=None,
                     help="render this many frames then quit (for testing)")
     ap.add_argument("--exit-on-key", action="store_true",
@@ -2385,6 +2388,10 @@ def main():
     ap.add_argument("--exit-on-unfocus", metavar="CLASS", default=None,
                     help="quit when this Hyprland window class loses focus")
     opts = ap.parse_args()
+
+    if opts.feed:
+        save_state(feed=time.time())
+        return 0
 
     if opts.night not in ("cycle",):
         try:
@@ -2432,6 +2439,7 @@ def main():
     # and means the choice that gets remembered is the one you last made.
     follow_state = not asked and not logo_asked
     last_state = state_mtime()
+    last_feed = load_state().get("feed") or 0
 
     out = sys.stdout
     isatty = out.isatty() and sys.stdin.isatty()
@@ -2502,6 +2510,12 @@ def main():
                     if want != opts.logo:
                         opts.logo = want
                         tank.logo = tank._logo()
+                    # Food asked for from outside -- the bar button, or
+                    # `fishtank --feed` from anywhere.
+                    asked_at = shared.get("feed") or 0
+                    if asked_at > last_feed and time.time() - asked_at < 30:
+                        last_feed = asked_at
+                        tank.feed(now)
 
             if opts.exit_on_unfocus and now >= next_focus_check:
                 next_focus_check = now + 1.0
