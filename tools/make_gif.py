@@ -10,6 +10,7 @@ frames piped to ffmpeg, which keeps every colour instead of the 256 a GIF
 allows.
 
     GIF_THEME=gruvbox GIF_NIGHT=0.85 GIF_FEED=2.5 GIF_PREDATOR=6 GIF_SEED=12
+    GIF_COLORS=128
 """
 
 import importlib.util
@@ -174,7 +175,13 @@ def main():
               % (path, width, height, len(raw), len(raw) / fps))
         return
 
-    palette, lookup = build_palette(counts)
+    # One palette slot is kept back to mean "same as the frame before", which
+    # is what makes a large GIF affordable: most of a tank holds still from
+    # one frame to the next, and a run of "unchanged" compresses to nothing.
+    # Fewer colours compress better, and a tank's gradient has more shades
+    # than anyone can see. GIF_COLORS trades one against the other.
+    palette, lookup = build_palette(counts, limit=int(os.environ.get("GIF_COLORS", "255")))
+    transparent = len(palette)
 
     frames = []
     for frame in raw:
@@ -190,6 +197,31 @@ def main():
     while len(palette) < 256:
         palette.append((0, 0, 0))
 
+    def difference(previous, current):
+        """The changed rectangle, with everything inside it that did not
+        change marked transparent. Returns (left, top, w, h, pixels)."""
+        left, right, top, bottom = width, -1, height, -1
+        for y in range(height):
+            base = y * width
+            if previous[base:base + width] == current[base:base + width]:
+                continue
+            top = min(top, y)
+            bottom = max(bottom, y)
+            for x in range(width):
+                if previous[base + x] != current[base + x]:
+                    left = min(left, x)
+                    right = max(right, x)
+        if right < 0:
+            return None
+        box_w, box_h = right - left + 1, bottom - top + 1
+        out = bytearray()
+        for y in range(top, bottom + 1):
+            base = y * width
+            for x in range(left, right + 1):
+                value = current[base + x]
+                out.append(value if value != previous[base + x] else transparent)
+        return left, top, box_w, box_h, bytes(out)
+
     with open(path, "wb") as fh:
         fh.write(b"GIF89a")
         fh.write(struct.pack("<HHBBB", width, height, 0xF7, 0, 0))
@@ -197,18 +229,34 @@ def main():
             fh.write(bytes(colour))
         fh.write(b"\x21\xFF\x0BNETSCAPE2.0\x03\x01\x00\x00\x00")   # loop forever
         delay = max(2, round(100 / fps))
-        for data in frames:
-            fh.write(b"\x21\xF9\x04\x04" + struct.pack("<H", delay) + b"\x00\x00")
-            fh.write(b"\x2C" + struct.pack("<HHHHB", 0, 0, width, height, 0))
+
+        def put(left, top, box_w, box_h, data, transparent_flag):
+            # Disposal 1: leave the frame in place for the next one to
+            # paint over. Without it the transparent pixels show the page.
+            flags = 0x04 | (0x01 if transparent_flag else 0x00)
+            fh.write(b"\x21\xF9\x04" + bytes([flags])
+                     + struct.pack("<H", delay)
+                     + bytes([transparent if transparent_flag else 0]) + b"\x00")
+            fh.write(b"\x2C" + struct.pack("<HHHHB", left, top, box_w, box_h, 0))
             fh.write(bytes([8]))
             packed = lzw(data, 8)
             for i in range(0, len(packed), 255):
                 chunk = packed[i:i + 255]
                 fh.write(bytes([len(chunk)]) + chunk)
             fh.write(b"\x00")
+
+        put(0, 0, width, height, frames[0], False)
+        for index in range(1, len(frames)):
+            patch = difference(frames[index - 1], frames[index])
+            if patch is None:                      # nothing moved
+                put(0, 0, 1, 1, bytes([transparent]), True)
+                continue
+            put(patch[0], patch[1], patch[2], patch[3], patch[4], True)
         fh.write(b"\x3B")
-    print("wrote %s (%dx%d, %d frames, %.1fs)" %
-          (path, width, height, len(frames), len(frames) / fps))
+
+    print("wrote %s (%dx%d, %d frames, %.1fs, %.1f KB)" %
+          (path, width, height, len(frames), len(frames) / fps,
+           os.path.getsize(path) / 1024))
 
 
 if __name__ == "__main__":
