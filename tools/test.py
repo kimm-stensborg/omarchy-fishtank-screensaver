@@ -15,6 +15,7 @@ import random
 import subprocess
 import sys
 import tempfile
+import time
 from importlib.machinery import SourceFileLoader
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -282,6 +283,21 @@ if not QUICK:
               os.path.exists(os.path.join(links, "keep-me")))
         check("uninstall removes saved state",
               not os.path.exists(os.path.join(home, "state", "fishtank")))
+
+# -- feeding from outside, which is what the bar button does ----------------
+
+with tempfile.TemporaryDirectory() as tmp:
+    env = dict(os.environ, XDG_STATE_HOME=tmp)
+    fishtank = os.path.join(ROOT, "bin", "fishtank")
+    done = subprocess.run([fishtank, "--feed"], capture_output=True, text=True, env=env)
+    check("--feed exits 0", done.returncode == 0, done.stderr.strip())
+    state_path = os.path.join(tmp, "fishtank", "state.json")
+    check("--feed leaves a request", os.path.exists(state_path))
+    if os.path.exists(state_path):
+        with open(state_path, encoding="utf-8") as fh:
+            saved = json.load(fh)
+        check("the request is recent", abs(saved.get("feed", 0) - time.time()) < 30)
+        check("--feed keeps the rest of the state", "feed" in saved)
 
 # -- the plugin contract -----------------------------------------------------
 
