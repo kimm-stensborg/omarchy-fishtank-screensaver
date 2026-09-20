@@ -1078,9 +1078,50 @@ class Traveller:
         self.x = 0.0
         self.y = 0.0
         self.frame = 0
+        self.crumb_level = None
         # Put it where it belongs before the first frame, or every tank opens
         # with the whole ocean stacked at its left edge.
         self.update(0.0, time.time())
+
+    def snack(self, clock):
+        """Where this fish's crumb is, and how far it has risen to meet it.
+
+        Worked out from the feed's timestamp and the fish's number, so every
+        monitor sends the same fish after the same crumb at the same moment
+        -- one that is halfway through its lunge when it crosses a screen
+        edge keeps lunging on the next screen.
+        """
+        feed = self.tank.world_feed
+        if not feed:
+            return 0.0, None
+        t = clock - feed
+        if t < 0 or t > 12.0:
+            return 0.0, None
+
+        rng = random.Random((WORLD_SEED ^ (self.index * 2654435761)) ^ int(feed * 1000))
+        if rng.random() > 0.78:            # not every fish is hungry
+            return 0.0, None
+        delay = rng.uniform(0.8, 5.0)      # when it gets there
+        rise = rng.uniform(0.06, 0.18)     # how far up the crumb is
+        approach, recover = 1.5, 1.9
+        meet_at = rise * 0.55              # they meet partway
+
+        # The crumb sinks from where it landed to the meeting point.
+        crumb = None
+        if t < delay:
+            fallen = clamp(t / delay, 0.0, 1.0)
+            crumb = self.level - rise + (rise - meet_at) * fallen
+
+        # The fish rises into it, then settles back.
+        if t < delay - approach:
+            lift = 0.0
+        elif t < delay:
+            lift = meet_at * ease((t - (delay - approach)) / approach)
+        elif t < delay + recover:
+            lift = meet_at * (1.0 - ease((t - delay) / recover))
+        else:
+            lift = 0.0
+        return -lift, crumb
 
     def update(self, dt, now):
         clock = time.time()
@@ -1093,7 +1134,9 @@ class Traveller:
             if best is None or abs(local - self.tank.w * 0.5) < abs(best - self.tank.w * 0.5):
                 best = local
         self.x = best
-        self.y = (self.level + math.sin(self.phase + clock * self.bob_rate) * self.amp) \
+        lift, self.crumb_level = self.snack(clock)
+        self.y = (self.level + lift
+                  + math.sin(self.phase + clock * self.bob_rate) * self.amp) \
             * (self.tank.floor - self.h)
         self.y = clamp(self.y, 1, self.tank.floor - self.h - 1)
         self.frame = int(clock * (3.0 + self.speed * 0.05)) % 4
@@ -1101,6 +1144,14 @@ class Traveller:
     def draw(self, buf):
         if self.x + self.w < -1 or self.x > self.tank.w + 1:
             return
+        if self.crumb_level is not None:
+            # Its crumb, drawn where the fish is heading.
+            cx = int(self.x + self.w * (0.9 if self.dir > 0 else 0.1))
+            cy = int(self.crumb_level * (self.tank.floor - self.h))
+            colour = pack(mix(SAND_LIGHT, (255, 180, 90), 0.45))
+            for dy in range(self.tank.unit):
+                for dx in range(self.tank.unit):
+                    self.tank.px(buf, cx + dx, cy + dy, colour)
         frames = self.right if self.dir > 0 else self.left
         self.tank.blit(buf, frames[self.frame], int(self.x), int(self.y))
 
@@ -1117,10 +1168,6 @@ def night_level(elapsed, period=NIGHT_PERIOD):
     day_end, dusk_end, night_end = NIGHT_MARKS
     phase = (elapsed % period) / period
 
-    def ease(t):
-        t = clamp(t, 0.0, 1.0)
-        return t * t * (3 - 2 * t)
-
     if phase < day_end:
         return 0.0
     if phase < dusk_end:
@@ -1128,6 +1175,11 @@ def night_level(elapsed, period=NIGHT_PERIOD):
     if phase < night_end:
         return 1.0
     return 1.0 - ease((phase - night_end) / (1.0 - night_end))
+
+
+def ease(t):
+    t = clamp(t, 0.0, 1.0)
+    return t * t * (3 - 2 * t)
 
 
 def night_colour():
@@ -1702,6 +1754,9 @@ class Tank:
         # put chunky sprites next to smooth ones, which read as two different
         # pictures on the same screen.
         self.unit = 1
+        # Set before the travelling fish exist, because they ask about it as
+        # soon as they place themselves.
+        self.world_feed = 0.0
 
         self.water = self._water_rows()
         self.sand = self._sand()
@@ -2014,8 +2069,13 @@ class Tank:
 
     # -- food ---------------------------------------------------------------
 
-    def feed(self, now):
-        """Sprinkle food across the surface."""
+    def feed(self, now, world_at=None):
+        """Sprinkle food across the surface.
+
+        `world_at` is the moment the feed was asked for, shared by every
+        monitor, which is what lets the travelling fish agree about it.
+        """
+        self.world_feed = world_at or time.time()
         count = clamp(self.w // 6, 6, 40)
         for _ in range(count):
             self.flakes.append(Flake(self, random.uniform(2, self.w - 3),
@@ -2257,14 +2317,14 @@ GLYPHS = {
 LABEL_SECONDS = 2.0
 
 
-def draw_label(tank, buf, text, fade=1.0):
-    """Stamp text into the top-left corner of the tank."""
+def text_width(text, scale=1):
+    return max(0, len(text) * 4 * scale - scale)
+
+
+def draw_text(tank, buf, text, ox, oy, fade=1.0, scale=1):
+    """Stamp text into the tank, in its own pixels."""
     text = text.upper()
-    # One pixel per pixel: at a screensaver font size that is already a
-    # comfortable read, and it leaves the tank to be the thing you look at.
-    scale = 1
     step = 4 * scale
-    ox, oy = 2, 3
     ink = pack(mix(INK, WATER_BOTTOM, 0.25))
     lit = pack(mix(WHITE, SURFACE, 1.0 - clamp(fade, 0.0, 1.0)))
     for i, ch in enumerate(text):
@@ -2281,6 +2341,24 @@ def draw_label(tank, buf, text, fade=1.0):
                         py = oy + gy * scale + dy
                         tank.px(buf, px + scale, py + scale, ink)
                         tank.px(buf, px, py, lit)
+
+
+def draw_label(tank, buf, text, fade=1.0):
+    """What a function key just picked, in the top-left corner."""
+    draw_text(tank, buf, text, 2, 3, fade)
+
+
+def draw_clock(tank, buf, hours=24):
+    """The time, top right, dimmed with the light so it does not glare at
+    night."""
+    now = time.localtime()
+    hour = now.tm_hour if hours == 24 else (now.tm_hour % 12 or 12)
+    text = "%02d:%02d" % (hour, now.tm_min) if hours == 24 \
+        else "%d:%02d" % (hour, now.tm_min)
+    scale = 2 if tank.w >= 120 else 1
+    width = text_width(text, scale)
+    draw_text(tank, buf, text, tank.w - width - 2 - scale, 3,
+              fade=0.35 - 0.2 * tank.night, scale=scale)
 
 
 # ------------------------------------------------------------------ output ---
@@ -2316,7 +2394,8 @@ for _i, _codes in enumerate((
         (b"\x1bOQ", b"\x1b[12~", b"\x1b[[B"),
         (b"\x1bOR", b"\x1b[13~", b"\x1b[[C"),
         (b"\x1bOS", b"\x1b[14~", b"\x1b[[D"),
-        (b"\x1b[15~", b"\x1bOt", b"\x1b[[E"))):
+        (b"\x1b[15~", b"\x1bOt", b"\x1b[[E"),
+        (b"\x1b[17~", b"\x1bOu"))):
     for _code in _codes:
         FUNCTION_KEYS[_code] = _i + 1
 
@@ -2350,6 +2429,11 @@ def main():
                          "use by default, or name one to preview it")
     ap.add_argument("--no-theme", dest="theme", action="store_const",
                     const="none", help="use the built-in aquarium palette")
+    ap.add_argument("--clock", nargs="?", const=24, type=int, default=None,
+                    choices=(12, 24), metavar="12|24",
+                    help="show the time in the corner; F6 toggles it")
+    ap.add_argument("--no-clock", dest="clock", action="store_const", const=0,
+                    help="no clock")
     ap.add_argument("--no-ocean", dest="ocean", action="store_false",
                     help="keep this screen's fish to itself instead of "
                          "sharing one ocean across the monitors")
@@ -2392,6 +2476,10 @@ def main():
     asked = opts.theme is not None
     logo_asked = opts.logo is not None
     night_asked = opts.night is not None
+    clock_asked = opts.clock is not None
+    clock_hours = opts.clock if clock_asked else saved.get("clock", 0)
+    if clock_hours not in (0, 12, 24):
+        clock_hours = 0
 
     night_choice = opts.night if night_asked else saved.get("night", "cycle")
     if night_choice != "cycle":
@@ -2430,8 +2518,10 @@ def main():
     # A screensaver runs one of these per monitor, and a key only reaches the
     # focused one. Following the state file keeps the other screens in step,
     # and means the choice that gets remembered is the one you last made.
-    follow_state = not asked and not logo_asked and not night_asked
+    follow_state = (not asked and not logo_asked and not night_asked
+                    and not clock_asked)
     last_state = state_mtime()
+    last_state_applied = last_state
     last_feed = load_state().get("feed") or 0
 
     out = sys.stdout
@@ -2496,6 +2586,8 @@ def main():
             last = now
             tank.update(dt, now)
             tank.draw(buf)
+            if clock_hours:
+                draw_clock(tank, buf, clock_hours)
             if now < label_until:
                 draw_label(tank, buf, label,
                            clamp((label_until - now) / 0.4, 0.0, 1.0))
@@ -2504,11 +2596,20 @@ def main():
             if opts.frames is not None and drawn >= opts.frames:
                 break
 
-            if follow_state and now >= next_state_check:
+            if now >= next_state_check:
                 next_state_check = now + 1.0
                 stamp = state_mtime()
                 if stamp != last_state:
                     last_state = stamp
+                    shared = load_state()
+                    # Food asked for from outside -- another monitor's F4, or
+                    # the bar button -- is honoured whatever else is pinned.
+                    asked_at = shared.get("feed") or 0
+                    if asked_at > last_feed and time.time() - asked_at < 30:
+                        last_feed = asked_at
+                        tank.feed(now, asked_at)
+                if follow_state and stamp != last_state_applied:
+                    last_state_applied = stamp
                     shared = load_state()
                     want = shared.get("theme") or choice
                     if want != choice:
@@ -2523,6 +2624,9 @@ def main():
                         tank.logo = tank._logo()
                     # Food asked for from outside -- the bar button, or
                     # `fishtank --feed` from anywhere.
+                    want = shared.get("clock", clock_hours)
+                    if want in (0, 12, 24) and want != clock_hours:
+                        clock_hours = want
                     want = shared.get("night", night_choice)
                     if want != night_choice:
                         night_choice = want
@@ -2563,6 +2667,12 @@ def main():
                     last_state = state_mtime()
                     resized[0] = True                  # rebuild with the new palette
                     label = shown
+                elif key == 6:                         # F6: the clock
+                    clock_hours = {0: 24, 24: 12, 12: 0}[clock_hours]
+                    save_state(clock=clock_hours)
+                    last_state = state_mtime()
+                    label = {0: "no clock", 24: "clock 24h",
+                             12: "clock 12h"}[clock_hours]
                 elif key == 5:                         # F5: day / night / both
                     order = ("cycle", 1.0, 0.0)
                     where = order.index(night_choice) if night_choice in order else 0
@@ -2581,7 +2691,11 @@ def main():
                     tank.logo = tank._logo()
                     label = "logo: %s" % opts.logo
                 else:                                  # F4: feed the fish
-                    tank.feed(now)
+                    asked_at = time.time()
+                    tank.feed(now, asked_at)
+                    save_state(feed=asked_at)
+                    last_feed = asked_at
+                    last_state = state_mtime()
                     label = "feeding"
                 label_until = time.monotonic() + LABEL_SECONDS
             elif sleep > 0:

@@ -83,6 +83,7 @@ in a terminal by hand.
 | F3 | Cycle the back wall: wordmark, lockup, mark, nothing |
 | F4 | Feed the fish |
 | F5 | Day, night, or the cycle between them |
+| F6 | The time in the corner: 24-hour, 12-hour, or off |
 
 F1, F2, F3 and F5 name what they just picked in the top-left corner, in the tank's
 own pixels, and the text fades out after two seconds. **What you pick is what
@@ -101,15 +102,30 @@ Switching theme repaints the tank you were already watching rather than
 generating a new one: the layout seed is held across the rebuild, so the same
 castle, the same weeds, in new colours.
 
+### The clock
+
+F6 puts the time in the top-right corner, in the tank's own pixels, dimmed
+with the light so it does not glare after dark. `--clock`, `--clock 12` and
+`--no-clock` set it from the command line, and like the other keys the choice
+is remembered and shared across monitors.
+
 ### Feeding
 
-F4 sprinkles food across the surface. Flakes sink and wobble; every fish has
+F4 sprinkles food across the surface -- on every monitor, not just the one
+you pressed it on. Flakes sink and wobble; every fish has
 its own eyesight, between roughly 24 and 68 pixels, so the shoal notices in
 dribs rather than turning as one -- the near ones dart up first, the rest
 drift over as the food falls into their range. A fish that reaches a flake
 eats it and lets out a bubble. Whatever makes it to the sand is the crab's:
 it drops its patrol, hurries over and cleans up. Anything still uneaten after
 25 seconds dissolves.
+
+The fish travelling through the ocean eat too, and that needs care: they have
+no shared state to agree about who got what. So a feed is a deterministic
+event like everything else about them -- from its timestamp and a fish's
+number, every monitor works out the same fish going after the same crumb at
+the same moment, and one that is halfway through its lunge as it crosses a
+screen edge keeps lunging on the next screen.
 
 ## One ocean
 

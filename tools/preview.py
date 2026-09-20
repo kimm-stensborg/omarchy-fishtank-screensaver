@@ -72,6 +72,9 @@ def main():
         tank.update(dt, now)
     tank.draw(buf)
 
+    if os.environ.get("PREVIEW_CLOCK"):
+        ft.draw_clock(tank, buf, int(os.environ["PREVIEW_CLOCK"]))
+
     label = os.environ.get("PREVIEW_LABEL")
     if label:
         ft.draw_label(tank, buf, label, 1.0)

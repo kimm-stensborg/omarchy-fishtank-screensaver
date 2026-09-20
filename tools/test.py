@@ -173,13 +173,36 @@ try:
         check("local fish stay on their own screen", not strays,
               "%d wandered off" % len(strays))
 
+        # Feeding reaches the travelling fish, and every screen sends the
+        # same ones after the same crumbs.
+        feed_at = clock
+        for tank in screens.values():
+            tank.feed(1000.0, feed_at)
+        lifts = {}
+        for offset in (1.0, 2.5, 4.0):
+            ft.time.time = lambda t=clock + offset: t
+            for name, tank in screens.items():
+                for passer in tank.travellers:
+                    passer.update(1 / 24.0, clock + offset)
+                lifts.setdefault(offset, {})[name] = {
+                    p.index: round(p.snack(clock + offset)[0], 5)
+                    for p in tank.travellers}
+        ft.time.time = lambda: clock
+        for offset, by_screen in lifts.items():
+            values = list(by_screen.values())
+            check("screens agree who is eating at +%.1fs" % offset,
+                  all(v == values[0] for v in values))
+            check("some travelling fish go for the food at +%.1fs" % offset,
+                  any(v != 0 for v in values[0].values()))
+
         seen = [name for name, tank in screens.items()
                 if -tank.travellers[0].w < tank.travellers[0].x < tank.w]
         check("a travelling fish is on some screen", len(seen) >= 1, str(seen))
 
-        # Rebuilding a screen must not move the ocean.
+        # Rebuilding a screen must not move the ocean. Both are read at the
+        # same moment, since the checks above moved the clock on.
         again = build_screen(*SCREENS[0][1:])
-        for passer in again.travellers:
+        for passer in again.travellers + screens["left"].travellers:
             passer.update(1 / 24.0, clock)
         drift = abs(again.travellers[0].x - screens["left"].travellers[0].x)
         check("the ocean is the same after a rebuild", drift < 0.001,
@@ -246,10 +269,26 @@ for w in (5, 9, 17):
     check("jelly at %d has tentacles" % w,
           any("t" in row for row in ft.make_jelly(w, int(w * 1.6))))
 
+# -- the clock ---------------------------------------------------------------
+
+for cols, rows in ((96, 30), (320, 81)):
+    for hours in (12, 24):
+        tank, buf = run_tank(cols, rows, Opts(), frames=2)
+        before = list(buf)
+        ft.draw_clock(tank, buf, hours)
+        check("the %dh clock draws at %dx%d" % (hours, cols, rows), buf != before)
+        # It belongs in the top corner, not over the sand.
+        changed = [i for i, (a, b) in enumerate(zip(before, buf)) if a != b]
+        check("the clock stays out of the way at %dx%d" % (cols, rows),
+              all(i // tank.w < tank.h * 0.25 for i in changed))
+        check("the clock keeps to the right at %dx%d" % (cols, rows),
+              all(i % tank.w > tank.w * 0.5 for i in changed))
+
 # -- keys --------------------------------------------------------------------
 
 for code, want in ((b"\x1bOP", 1), (b"\x1b[11~", 1), (b"\x1bOQ", 2),
-                   (b"\x1bOR", 3), (b"\x1bOS", 4), (b"q", None), (b"\x1b", None)):
+                   (b"\x1bOR", 3), (b"\x1bOS", 4), (b"\x1b[15~", 5),
+                   (b"\x1b[17~", 6), (b"q", None), (b"\x1b", None)):
     check("key %r reads as %s" % (code, want), ft.function_key(code) == want)
 
 # -- state round-trip --------------------------------------------------------
@@ -273,7 +312,10 @@ with tempfile.TemporaryDirectory() as tmp:
 # -- the program itself ------------------------------------------------------
 
 for args in (["--frames", "2"], ["--frames", "2", "--no-theme"],
-             ["--frames", "2", "--theme", "gruvbox"], ["--frames", "2", "--logo", "lockup"]):
+             ["--frames", "2", "--theme", "gruvbox"], ["--frames", "2", "--logo", "lockup"],
+             ["--frames", "2", "--clock"], ["--frames", "2", "--clock", "12"],
+             ["--frames", "2", "--no-clock"], ["--frames", "2", "--night", "1"],
+             ["--frames", "2", "--no-ocean"]):
     done = subprocess.run([os.path.join(ROOT, "bin", "fishtank")] + args,
                           capture_output=True, text=True)
     check("fishtank %s exits 0" % " ".join(args), done.returncode == 0, done.stderr.strip())
