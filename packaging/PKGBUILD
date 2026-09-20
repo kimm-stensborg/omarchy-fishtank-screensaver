@@ -1,6 +1,6 @@
 # Maintainer: Kimm Stensborg <kimm-stensborg@users.noreply.github.com>
 pkgname=omarchy-fishtank-screensaver
-pkgver=1.0.0
+pkgver=1.1.0
 pkgrel=1
 pkgdesc="An 8-bit fish tank that runs as the Omarchy screensaver"
 arch=('any')
@@ -10,7 +10,7 @@ depends=('python')
 optdepends=('omarchy: to run as the system screensaver'
             'hyprland: for one ocean across several monitors')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('490947480d5426d2f73cef954f5c277133e4eb9cbc6718e8538e5d9964f44b41')
+sha256sums=('1159a092d133635533aa782f532faaf9870cbf1557dc03b9589c787c79c098dd')
 
 package() {
   cd "$srcdir/$pkgname-$pkgver"
