@@ -759,16 +759,19 @@ class Fish:
     def __init__(self, tank, species=None, depth=None):
         self.tank = tank
         self.species = species or random.choice(SPECIES)
-        self.depth = depth if depth is not None else random.random()
+        self.depth = depth if depth is not None else random.random() ** 1.35
         # Sized from the tank rather than in absolute pixels: the screensaver
         # runs at font size 18, which is half the grid of an everyday
         # terminal, and a fish measured in pixels swells to fill it.
-        near = self.depth > 0.80
-        base_h = int(round(tank.h * (0.115 if near else 0.078)))
-        base_h += random.choice((-1, 0, 0, 1))
-        base_h = int(clamp(base_h, 5, 19)) | 1
-        base_w = max(9, int(round(base_h / 0.44)) | 1)
-        base_w = min(base_w, max(9, self.tank_width_cap(tank)))
+        # Size comes from depth: the ones far back are small and dim, the ones
+        # near the glass are big. A flat size for everything reads as a row of
+        # identical fish, which is not what a tank looks like.
+        base_h = tank.h * (0.042 + 0.075 * self.depth) + random.uniform(-0.6, 0.6)
+        base_h = int(clamp(round(base_h), 4, 19))
+        # A little jitter in the aspect as well, so two fish of a height are
+        # not the same fish.
+        base_w = max(7, int(round(base_h / random.uniform(0.40, 0.50))))
+        base_w = min(base_w, max(7, self.tank_width_cap(tank)))
         frames = build_fish_frames(base_w, base_h, self.species)
         fade = (1.0 - self.depth) * 0.38
         frames = [f.tinted(WATER_TOP, fade) for f in frames]
@@ -865,7 +868,7 @@ class Puffer(Fish):
         self.tank = tank
         self.depth = random.uniform(0.3, 0.7)
         base = Sprite.from_art(PUFFER_ART, PUFFER_PALETTE)
-        base = base.tinted(WATER_TOP, (1.0 - self.depth) * 0.3)
+        base = base.tinted(WATER_TOP, (1.0 - self.depth) * 0.3).scaled(tank.unit)
         self.right = [base, base.scaled(1)]
         self.left = [base.mirrored(), base.mirrored()]
         self.w, self.h = base.w, base.h
@@ -889,8 +892,8 @@ class Puffer(Fish):
 class Jelly:
     def __init__(self, tank):
         self.tank = tank
-        base = Sprite.from_art(JELLY_ART, JELLY_PALETTE)
-        self.frames = [base, base.scaled(1)]
+        base = Sprite.from_art(JELLY_ART, JELLY_PALETTE).scaled(tank.unit)
+        self.frames = [base, base]
         self.w, self.h = base.w, base.h
         self.x = random.uniform(0, max(1, tank.w - self.w))
         self.y = random.uniform(tank.floor * 0.3, tank.floor - self.h - 4)
@@ -916,8 +919,8 @@ class Jelly:
 class Crab:
     def __init__(self, tank):
         self.tank = tank
-        self.a = Sprite.from_art(CRAB_ART, CRAB_PALETTE)
-        self.b = Sprite.from_art(CRAB_ART_B, CRAB_PALETTE)
+        self.a = Sprite.from_art(CRAB_ART, CRAB_PALETTE).scaled(tank.unit)
+        self.b = Sprite.from_art(CRAB_ART_B, CRAB_PALETTE).scaled(tank.unit)
         self.w, self.h = self.a.w, self.a.h
         self.x = random.uniform(0, max(1, tank.w - self.w))
         self.y = tank.floor - self.h + 1
@@ -976,7 +979,7 @@ class Bubble:
             self.dead = True
 
     def draw(self, buf):
-        x, y, s = int(self.x), int(self.y), self.size
+        x, y, s = int(self.x), int(self.y), self.size * self.tank.unit
         if s == 1:
             self.tank.px(buf, x, y, self.colour)
         elif s == 2:
@@ -1017,7 +1020,10 @@ class Flake:
         self.x += math.sin(self.phase) * 3.0 * dt
 
     def draw(self, buf):
-        self.tank.px(buf, int(self.x), int(self.y), self.colour)
+        unit = self.tank.unit
+        for dy in range(unit):
+            for dx in range(unit):
+                self.tank.px(buf, int(self.x) + dx, int(self.y) + dy, self.colour)
 
 
 class Weed:
@@ -1027,7 +1033,7 @@ class Weed:
         self.height = random.randint(8, max(10, int(tank.floor * 0.45)))
         self.phase = random.uniform(0, math.tau)
         self.sway = random.uniform(1.2, 3.0)
-        self.width = random.choice((1, 1, 2))
+        self.width = random.choice((1, 1, 2)) * tank.unit
         self.colour = pack(random.choice(WEED))
         self.dark = pack(WEED[1])
         self.tip = pack(WEED[2])
@@ -1043,7 +1049,7 @@ class Weed:
             for w in range(self.width + (1 if f < 0.5 else 0)):
                 self.tank.px(buf, x + w, y, colour)
             # Leaves alternate sides every few pixels.
-            if i > 2 and i % 3 == 0 and f < 0.92:
+            if i > 2 and i % (3 * self.tank.unit) == 0 and f < 0.92:
                 side = 1 if (i // 3) % 2 == 0 else -1
                 lx = x + (self.width if side > 0 else -1)
                 self.tank.px(buf, lx, y, self.dark)
@@ -1061,6 +1067,10 @@ class Tank:
         self.opts = opts
         self.t = 0.0
         self.floor = int(self.h * 0.86)
+        # The generated fish scale smoothly with the tank; the hand-drawn
+        # sprites can only double, so they do that once there is room, and
+        # the castle stays the size of a castle next to the fish.
+        self.unit = 2 if self.h >= 130 else 1
 
         self.water = self._water_rows()
         self.sand = self._sand()
@@ -1070,7 +1080,7 @@ class Tank:
         self.flakes = []
         self.actors = []
         count = opts.fish if opts.fish is not None else \
-            clamp(int(self.w * self.h / 700), 6, 20)
+            clamp(int(self.w * self.h / 900), 6, 24)
         for _ in range(count):
             self.actors.append(Fish(self))
         # The hand-drawn sprites are a fixed size, so a very small tank simply
@@ -1211,13 +1221,13 @@ class Tank:
 
     def _decor(self):
         items = []
-        castle = Sprite.from_art(CASTLE_ART, CASTLE_PALETTE)
+        castle = Sprite.from_art(CASTLE_ART, CASTLE_PALETTE).scaled(self.unit)
         cx = int(self.w * random.uniform(0.12, 0.7))
         cx = clamp(cx, 1, max(1, self.w - castle.w - 1))
         items.append((castle, cx, self.floor - castle.h + 2))
         self.castle_rect = (cx, castle.w)
 
-        chest = Sprite.from_art(CHEST_ART, CHEST_PALETTE)
+        chest = Sprite.from_art(CHEST_ART, CHEST_PALETTE).scaled(self.unit)
         for _ in range(12):
             ox = random.randrange(0, max(1, self.w - chest.w))
             if abs(ox - cx) > castle.w + 2:

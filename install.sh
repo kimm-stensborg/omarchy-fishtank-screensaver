@@ -16,7 +16,7 @@ case ":$PATH:" in
   ;;
 esac
 
-for name in fishtank omarchy-screensaver; do
+for name in fishtank omarchy-screensaver omarchy-launch-screensaver; do
   target="$BIN/$name"
   if [[ -e $target && ! -L $target ]]; then
     echo "Refusing to replace $target: it exists and is not a symlink." >&2

@@ -31,7 +31,7 @@ done
 removed=0
 left_alone=()
 
-for name in fishtank omarchy-screensaver; do
+for name in fishtank omarchy-screensaver omarchy-launch-screensaver; do
   target="$BIN/$name"
   [[ -e $target || -L $target ]] || continue
 
@@ -45,7 +45,7 @@ for name in fishtank omarchy-screensaver; do
   # you installed from may have been moved or deleted since.
   dest="$(readlink "$target")"
   case "$dest" in
-  */bin/fishtank | */bin/omarchy-screensaver)
+  */bin/fishtank | */bin/omarchy-screensaver | */bin/omarchy-launch-screensaver)
     rm "$target"
     echo "removed $target"
     removed=$((removed + 1))

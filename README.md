@@ -20,19 +20,39 @@ number -- a fractional resize smears those strokes into grey mush. A tall tank
 gets it at full size; a short one halves it so the lockup still fits above the
 sand.
 
-Sprites are sized from the tank, not in fixed pixels. The screensaver runs
-foot at font size 18, which on a scaled laptop panel is about a hundred
-columns -- half the grid of an everyday terminal -- so a fish measured in
-pixels swells to a third of the screen there. Everything scales instead: fish
-are a fraction of the canvas height, and the logo shrinks to fit a narrow
-tank. The composition comes out the same whether it is a 106x60 canvas or a
-240x120 one.
+Everything is sized from the tank rather than in fixed pixels: fish are a
+fraction of the canvas height, with the ones far back small and dim and the
+ones near the glass large, and the logo shrinks to fit a narrow tank. The
+hand-drawn sprites -- castle, crab, chest -- double once the tank is tall
+enough for it, so a castle stays the size of a castle next to the fish.
 
 Swimming in the tank: generated fish species (each with a forked tail
 that flaps, a dorsal fin, a gill line and a proper eye), a pufferfish, drifting
 jellyfish, a crab that patrols the sand, bubbles from fish mouths and sand
 vents, swaying seaweed, a sandcastle, a treasure chest, god rays from the
 surface, drifting plankton and a rippling waterline.
+
+## Terminal size
+
+Omarchy opens the screensaver terminal at font size 18. That suits text
+effects, but it leaves the tank about 96x60 pixels on a scaled laptop panel --
+a quarter of what an everyday terminal gives -- and the fish come out coarse
+and few. So the install also shadows `omarchy-launch-screensaver`, which opens
+it at size 12 instead: roughly 160x90 pixels on that same panel and 266x136 on
+a 1440p monitor.
+
+```bash
+printf -- '--font-size 10\n' > ~/.config/fishtank.conf   # finer still
+printf -- '--font-size 18\n' > ~/.config/fishtank.conf   # Omarchy's original grid
+```
+
+The shadow does not copy Omarchy's launcher -- its multi-monitor handling
+belongs upstream and should keep working through updates. It points
+`OMARCHY_PATH` at a mirror of Omarchy's tree, every entry symlinked back to
+the original except the terminal's screensaver config, which is ours, and then
+hands off to the real launcher. That is the only thing the launcher reads
+`OMARCHY_PATH` for. Ghostty and Kitty take their font size as a command-line
+flag the launcher sets itself, so those two keep size 18.
 
 ## Keys
 
@@ -92,8 +112,11 @@ want the screensaver to run with goes in `~/.config/fishtank.conf`, one flag
 per line:
 
 ```bash
-printf -- '--logo lockup\n' > ~/.config/fishtank.conf
+printf -- '--logo lockup\n--font-size 10\n' > ~/.config/fishtank.conf
 ```
+
+`--font-size` is read by the launcher rather than passed to the tank; every
+other line goes to `fishtank` as an argument.
 
 ## Install
 
@@ -103,7 +126,8 @@ cd omarchy-fishtank-screensaver
 ./install.sh
 ```
 
-That symlinks `bin/fishtank` and `bin/omarchy-screensaver` into `~/.local/bin`,
+That symlinks `bin/fishtank`, `bin/omarchy-screensaver` and
+`bin/omarchy-launch-screensaver` into `~/.local/bin`,
 which sits ahead of `/usr/share/omarchy/bin` on `PATH`. Omarchy's own
 `omarchy-launch-screensaver` keeps doing the work — one terminal per monitor,
 right font, right window class — it just finds this `omarchy-screensaver`
@@ -174,8 +198,9 @@ fishtank [--theme [NAME] | --no-theme]
 | `--exit-on-key` | Quit on any keypress — screensaver mode. |
 | `--exit-on-unfocus` | Quit when the given Hyprland window class loses focus. |
 
-A full-screen tank costs a couple of milliseconds per frame, so at 24 fps it
-idles at a few percent of one core.
+A full-screen tank costs 2.5 ms per frame at 160x90 and 5.6 ms at 266x136, so
+at 24 fps one screen idles at 6-13% of a core. `--font-size` is the dial:
+a finer grid looks better and costs more.
 
 ## Development
 

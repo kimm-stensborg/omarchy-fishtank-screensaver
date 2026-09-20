@@ -1,0 +1,92 @@
+#!/bin/bash
+
+# omarchy:summary=Launch the Omarchy screensaver with a finer terminal grid.
+#
+# Omarchy's launcher opens the screensaver terminal at font size 18. That is
+# right for text effects, but it leaves the fish tank about 96x60 pixels on a
+# scaled laptop panel -- a quarter of what an everyday terminal gives -- and
+# the tank comes out coarse.
+#
+# Rather than carry a copy of the launcher (whose multi-monitor handling is
+# fiddly and belongs upstream), this hands straight off to the real one with
+# OMARCHY_PATH pointed at a mirror of Omarchy's tree: every entry symlinked
+# back to the original, except the terminal's screensaver config, which is
+# ours. The launcher reads OMARCHY_PATH only to find those configs, so all
+# its logic keeps running unchanged and keeps up with any Omarchy update.
+#
+# Set the size in ~/.config/fishtank.conf:  --font-size 12
+# Size 18 gives you Omarchy's original grid back.
+
+set -euo pipefail
+
+OMARCHY_PATH="${OMARCHY_PATH:-/usr/share/omarchy}"
+REAL="$OMARCHY_PATH/bin/omarchy-launch-screensaver"
+CONFIG="${FISHTANK_CONFIG:-$HOME/.config/fishtank.conf}"
+DEFAULT_SIZE=12
+
+if [[ ! -x $REAL ]]; then
+  echo "omarchy-launch-screensaver: $REAL not found" >&2
+  exit 1
+fi
+
+font_size="$DEFAULT_SIZE"
+if [[ -r $CONFIG ]]; then
+  while read -r line; do
+    line="${line%%#*}"
+    read -r -a words <<<"$line"
+    for ((i = 0; i < ${#words[@]}; i++)); do
+      case "${words[i]}" in
+      --font-size) font_size="${words[i + 1]:-$font_size}" ;;
+      --font-size=*) font_size="${words[i]#*=}" ;;
+      esac
+    done
+  done <"$CONFIG"
+fi
+
+# A bad value would land in a config file, so fall back rather than fail.
+[[ $font_size =~ ^[0-9]+(\.[0-9]+)?$ ]] || font_size="$DEFAULT_SIZE"
+
+# Nothing to change: let the real launcher run exactly as it is.
+if [[ $font_size == 18 || $font_size == 18.0 ]]; then
+  exec "$REAL" "$@"
+fi
+
+# Mirror a directory as symlinks back to the original.
+mirror() {
+  local src="$1" dst="$2" entry
+  mkdir -p "$dst"
+  for entry in "$src"/* "$src"/.[!.]*; do
+    [[ -e $entry ]] || continue
+    ln -sfn "$entry" "$dst/$(basename "$entry")"
+  done
+}
+
+root="${XDG_RUNTIME_DIR:-/tmp}/fishtank/omarchy-$font_size"
+rm -rf "$root"
+mirror "$OMARCHY_PATH" "$root"
+
+rm -f "$root/default"
+mirror "$OMARCHY_PATH/default" "$root/default"
+
+# foot
+if [[ -f $OMARCHY_PATH/default/foot/screensaver.ini ]]; then
+  rm -f "$root/default/foot"
+  mirror "$OMARCHY_PATH/default/foot" "$root/default/foot"
+  rm -f "$root/default/foot/screensaver.ini"
+  sed -E "s/^(font=.*:size=)[0-9.]+/\1$font_size/" \
+    "$OMARCHY_PATH/default/foot/screensaver.ini" >"$root/default/foot/screensaver.ini"
+fi
+
+# alacritty
+if [[ -f $OMARCHY_PATH/default/alacritty/screensaver.toml ]]; then
+  rm -f "$root/default/alacritty"
+  mirror "$OMARCHY_PATH/default/alacritty" "$root/default/alacritty"
+  rm -f "$root/default/alacritty/screensaver.toml"
+  sed -E "s/^(size = )[0-9.]+/\1$font_size/" \
+    "$OMARCHY_PATH/default/alacritty/screensaver.toml" >"$root/default/alacritty/screensaver.toml"
+fi
+
+# Ghostty and Kitty take their size on the command line, where the launcher
+# sets it and a config cannot override it, so those two keep font size 18.
+
+exec env OMARCHY_PATH="$root" "$REAL" "$@"
